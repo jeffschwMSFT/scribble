@@ -21,11 +21,10 @@ namespace scribble.Server.Hubs
 
         public override async Task OnDisconnectedAsync(Exception exception)
         {
-            // clean up
-            var group = GroupDetails.Purge(Context.ConnectionId);
+            GroupDetails.TryGetUsername(Context.ConnectionId, out string group, out string username);
 
             // todo what if the owner drops?
-            if (GroupDetails.TryGetOwner(group, out string ownerconnectionid))
+            if (!string.IsNullOrWhiteSpace(group) && GroupDetails.TryGetOwner(group, out string ownerconnectionid))
             {
                 if (string.Equals(Context.ConnectionId, ownerconnectionid, StringComparison.OrdinalIgnoreCase))
                 {
@@ -33,6 +32,9 @@ namespace scribble.Server.Hubs
                     await SendMessage(group, "sorry I left the game and no more rounds can be played");
                 }
             }
+
+            // clean up
+            GroupDetails.Purge(Context.ConnectionId);
 
             // broadcast the updated group
             if (!string.IsNullOrWhiteSpace(group))
@@ -89,7 +91,7 @@ namespace scribble.Server.Hubs
         public async Task SendMessage(string group, string message)
         {
             // get username
-            var username = GroupDetails.GetUsername(group, Context.ConnectionId);
+            GroupDetails.TryGetUsername(group, Context.ConnectionId, out string username);
 
             // check if we are in a round, and if so then check if this is a valid guess
             if (GroupDetails.TryGetInRound(group, out RoundDetails round))
@@ -635,15 +637,52 @@ namespace scribble.Server.Hubs
                 return true;
             }
 
-            public static string GetUsername(string group, string connectionId)
+            public static bool TryGetUsername(string connectionId, out string group, out string username)
             {
-                if (string.IsNullOrWhiteSpace(connectionId) || string.IsNullOrWhiteSpace(group)) return "";
+                username = "";
+                group = "";
+                if (string.IsNullOrWhiteSpace(connectionId)) return false;
+
+                try
+                {
+                    Guard.EnterReadLock();
+                    // deeper search is necessary
+                    foreach (var kvp in UserMap)
+                    {
+                        try
+                        {
+                            kvp.Value.InstanceGuard.ExitReadLock();
+                            if (kvp.Value.Connections.TryGetValue(connectionId, out UserDetails user))
+                            {
+                                group = kvp.Key;
+                                username = user.Username;
+                                return true;
+                            }
+                        }
+                        finally
+                        {
+                            kvp.Value.InstanceGuard.ExitReadLock();
+                        }
+                    }
+                }
+                finally
+                {
+                    Guard.ExitReadLock();
+                }
+
+                return false;
+            }
+
+            public static bool TryGetUsername(string group, string connectionId, out string username)
+            {
+                username = "";
+                if (string.IsNullOrWhiteSpace(connectionId) || string.IsNullOrWhiteSpace(group)) return false;
 
                 GroupDetails details = null;
                 try
                 {
                     Guard.EnterReadLock();
-                    if (!UserMap.TryGetValue(group, out details)) return "";
+                    if (!UserMap.TryGetValue(group, out details)) return false;
                 }
                 finally
                 {
@@ -652,13 +691,17 @@ namespace scribble.Server.Hubs
                 try
                 {
                     details.InstanceGuard.EnterReadLock();
-                    if (details.Connections.TryGetValue(connectionId, out UserDetails user)) return user.Username;
-                    return "";
+                    if (details.Connections.TryGetValue(connectionId, out UserDetails user))
+                    {
+                        username = user.Username;
+                        return true;
+                    }
                 }
                 finally
                 {
                     details.InstanceGuard.ExitReadLock();
                 }
+                return false;
             }
 
             public static List<UserDetails> GetUsers(string group)

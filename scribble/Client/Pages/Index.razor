@@ -27,27 +27,29 @@
         <button @onclick="GotoNextScene">Join Game</button>
     </div>
 
-    <div style="float: left; width: 400px; height: 100%; border: double;" name="joinPanel" hidden="@(Scene != SceneType.Lobby && Scene != SceneType.Play)">
+    <div style="float: left; width: 400px; height: 800px; border: double;" name="joinPanel" hidden="@(Scene != SceneType.Lobby && Scene != SceneType.Play)">
         Hello @UsernameInput<br />
         <p hidden="@(Scene != SceneType.Lobby)">Waiting for other players...</p>
+        <div id="scrollbox" style="height: 600px;overflow: scroll;">
+            <table border="1" cellpadding="5">
+                <tr><th>Player</th><th>Score</th></tr>
+                @foreach (var user in Users)
+                {
+                    // enoded as 'username:score'
+                    var parts = user.Split(':');
+                    <tr>
+                        <th>@(parts.Length >= 1 ? parts[0] : "")</th>
+                        <td>@(parts.Length >= 2 ? parts[1] : "0")</td>
+                    </tr>
+                }
+            </table>
+        </div>
         <p hidden="@(Scene != SceneType.Play || !IsOwner)">Select 'Draw' to choose the next player to draw</p>
-        <table border="1" cellpadding="5">
-            <tr><th>Player</th><th>Score</th></tr>
-            @foreach (var user in Users)
-            {
-                // enoded as 'username:score'
-                var parts = user.Split(':');
-                <tr>
-                    <th>@(parts.Length >= 1 ? parts[0] : "")</th>
-                    <td>@(parts.Length >= 2 ? parts[1] : "0")</td>
-                </tr>
-            }
-        </table><br />
         <button @onclick="StartNextRound" hidden="@(Scene != SceneType.Play || !IsOwner || GameState != GameStateType.Waiting)">Draw</button>
         <button @onclick="GotoNextScene" hidden="@(Scene != SceneType.Lobby || !IsOwner)">Start</button>
     </div>
 
-    <div style="float: left; border: double;" name="gamePanel" hidden="@(Scene != SceneType.Play)">
+    <div style="float: left; border: double; height: 800px" name="gamePanel" hidden="@(Scene != SceneType.Play)">
         <h1><label>@WordToDraw</label></h1>
         <h2><label>by @PlayerDrawing in @WordTimeout seconds</label></h2>
         <div id="canvas" tabindex="0" @onmouseup="e => MouseUp(e)" @onmousedown="e => MouseDown(e)" @onmousemove="e => MouseMove(e)" @ontouchstart="e => TouchDown(e)" @ontouchend="e => TouchUp(e)" @ontouchmove="e => TouchMove(e)">
@@ -70,21 +72,17 @@
             <button @onclick="SendClear">Clear</button>
             <br />
         </div>
-        <div class="form-group">
-            <label>
-                Message:
-                <input @bind="MessageInput" size="50" />
-            </label>
-        </div>
-        <button @onclick="SendMessage">Send</button>
-        <hr>
-
-        <ul id="messagesList">
-            @foreach (var message in Messages)
+        <div id="scrollbox" style="height: 300px;overflow: scroll;">
+            @foreach (var item in Messages)
             {
-                <li>@message</li>
+                <div>
+                    <div class="msg">@item</div>
+                </div>
             }
-        </ul>
+            <hr />
+        </div>
+        <input @bind="MessageInput" size="50" />
+        <button @onclick="SendMessage">Send</button>
     </div>
 </div>
 
