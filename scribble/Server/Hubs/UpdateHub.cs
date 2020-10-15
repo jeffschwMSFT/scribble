@@ -73,8 +73,7 @@ namespace scribble.Server.Hubs
             if (GroupDetails.IsInRound(group))
             {
                 // todo the timeout will be wrong
-                var round = GroupDetails.GetNextRound(group);
-                if (round != null)
+                if (GroupDetails.TryGetInRound(group, out RoundDetails round))
                 {
                     await Clients.Client(Context.ConnectionId).SendAsync("ReceiveNextRound", round.Username, round.Timeout.ToString(), round.ObfuscatedWord, false /* candraw */);
                     return;
@@ -139,7 +138,11 @@ namespace scribble.Server.Hubs
         public async Task SendNextRound(string group)
         {
             // choose details about the next round
-            if (!GroupDetails.SetupNextRound(group, out RoundDetails round)) return;
+            if (!GroupDetails.SetupNextRound(group, out RoundDetails round))
+            {
+                await Clients.Group(group).SendAsync("ReceiveMessage", "failed to start round");
+                return;
+            }
 
             // give credit for the drawer
             GroupDetails.AddToScore(group, round.ConnectionId, round.Timeout);
@@ -196,6 +199,7 @@ namespace scribble.Server.Hubs
                 HasAnswered = new HashSet<string>();
                 NextWordIndex = 0;
                 HasDrawn = new HashSet<string>();
+                InstanceGuard = new ReaderWriterLockSlim();
             }
 
             public static string Purge(string connectionId)
@@ -203,28 +207,53 @@ namespace scribble.Server.Hubs
                 var connectionsGroup = "";
                 try
                 {
-                    Guard.EnterWriteLock();
+                    Guard.EnterUpgradeableReadLock();
                     // gather dead groups and remove connection ids
                     var deadgroups = new HashSet<string>();
                     foreach (var kvp in UserMap)
                     {
-                        if (kvp.Value != null)
+                        try
                         {
-                            if (kvp.Value.Connections.Remove(connectionId))
+                            kvp.Value.InstanceGuard.EnterUpgradeableReadLock();
+                            if (kvp.Value.Connections.ContainsKey(connectionId))
                             {
+                                try
+                                {
+                                    kvp.Value.InstanceGuard.EnterWriteLock();
+                                    kvp.Value.Connections.Remove(connectionId);
+                                }
+                                finally
+                                {
+                                    kvp.Value.InstanceGuard.ExitWriteLock();
+                                }
                                 // capture the group
                                 connectionsGroup = kvp.Key;
                             }
+                            if (kvp.Value.Connections.Count == 0) deadgroups.Add(kvp.Key);
                         }
-                        if (kvp.Value.Connections.Count == 0) deadgroups.Add(kvp.Key);
+                        finally
+                        {
+                            kvp.Value.InstanceGuard.ExitUpgradeableReadLock();
+                        }
                     }
 
                     // remove deadgroups
-                    foreach (var group in deadgroups) UserMap.Remove(group);
+                    if (deadgroups.Count > 0)
+                    {
+                        try
+                        {
+                            Guard.EnterWriteLock();
+                            foreach (var group in deadgroups) UserMap.Remove(group);
+                        }
+                        finally
+                        {
+                            Guard.ExitWriteLock();
+                        }
+                    }
                 }
                 finally
                 {
-                    Guard.ExitWriteLock();
+                    Guard.ExitUpgradeableReadLock();
                 }
 
                 return connectionsGroup;
@@ -235,11 +264,19 @@ namespace scribble.Server.Hubs
                 done = false;
                 if (string.IsNullOrWhiteSpace(group)) return false;
 
+                GroupDetails details = null;
                 try
                 {
                     Guard.EnterReadLock();
-                    GroupDetails details = null;
                     if (!UserMap.TryGetValue(group, out details)) return false;
+                }
+                finally
+                {
+                    Guard.ExitReadLock();
+                }
+                try
+                {
+                    details.InstanceGuard.EnterReadLock();
                     if (details.Connections.Count != details.HasAnswered.Count)
                     {
                         done = false;
@@ -260,7 +297,7 @@ namespace scribble.Server.Hubs
                 }
                 finally
                 {
-                    Guard.ExitReadLock();
+                    details.InstanceGuard.ExitReadLock();
                 }
             }
 
@@ -268,11 +305,19 @@ namespace scribble.Server.Hubs
             {
                 if (string.IsNullOrWhiteSpace(group) || string.IsNullOrWhiteSpace(connectionId)) return false;
 
+                GroupDetails details = null;
                 try
                 {
-                    Guard.EnterWriteLock();
-                    GroupDetails details = null;
+                    Guard.EnterReadLock();
                     if (!UserMap.TryGetValue(group, out details)) return false;
+                }
+                finally
+                {
+                    Guard.ExitReadLock();
+                }
+                try
+                {
+                    details.InstanceGuard.EnterWriteLock();
                     UserDetails user = null;
                     if (!details.Connections.TryGetValue(connectionId, out user)) return false;
                     user.Score += score;
@@ -280,7 +325,7 @@ namespace scribble.Server.Hubs
                 }
                 finally
                 {
-                    Guard.ExitWriteLock();
+                    details.InstanceGuard.ExitWriteLock();
                 }
             }
 
@@ -288,17 +333,25 @@ namespace scribble.Server.Hubs
             {
                 if (string.IsNullOrWhiteSpace(group) || string.IsNullOrWhiteSpace(connectionid)) return false;
 
+                GroupDetails details = null;
                 try
                 {
-                    Guard.EnterWriteLock();
-                    GroupDetails details = null;
+                    Guard.EnterReadLock();
                     if (!UserMap.TryGetValue(group, out details)) return false;
+                }
+                finally
+                {
+                    Guard.ExitReadLock();
+                }
+                try
+                {
+                    details.InstanceGuard.EnterWriteLock();
                     details.HasAnswered.Add(connectionid);
                     return true;
                 }
                 finally
                 {
-                    Guard.ExitWriteLock();
+                    details.InstanceGuard.ExitWriteLock();
                 }
             }
 
@@ -307,17 +360,25 @@ namespace scribble.Server.Hubs
                 hasanswered = false;
                 if (string.IsNullOrWhiteSpace(group) || string.IsNullOrWhiteSpace(connectionid)) return false;
 
+                GroupDetails details = null;
                 try
                 {
                     Guard.EnterReadLock();
-                    GroupDetails details = null;
                     if (!UserMap.TryGetValue(group, out details)) return false;
+                }
+                finally
+                {
+                    Guard.ExitReadLock();
+                }
+                try
+                {
+                    details.InstanceGuard.EnterReadLock();
                     hasanswered = details.HasAnswered.Contains(connectionid);
                     return true;
                 }
                 finally
                 {
-                    Guard.ExitReadLock();
+                    details.InstanceGuard.ExitReadLock();
                 }
             }
 
@@ -325,70 +386,78 @@ namespace scribble.Server.Hubs
             {
                 if (string.IsNullOrWhiteSpace(group)) return false;
 
+                GroupDetails details = null;
                 try
                 {
-                    Guard.EnterWriteLock();
-                    GroupDetails details = null;
+                    Guard.EnterReadLock();
                     if (!UserMap.TryGetValue(group, out details)) return false;
-                    details.IsStarted = isstarted;
-                    return true;
                 }
                 finally
                 {
-                    Guard.ExitWriteLock();
+                    Guard.ExitReadLock();
                 }
+
+                // non-guarded access
+                details.IsStarted = isstarted;
+                return true;
             }
 
             public static bool IsGroupStarted(string group)
             {
                 if (string.IsNullOrWhiteSpace(group)) return false;
 
+                GroupDetails details = null;
                 try
                 {
                     Guard.EnterReadLock();
-                    GroupDetails details = null;
                     if (!UserMap.TryGetValue(group, out details)) return false;
-                    return details.IsStarted;
                 }
                 finally
                 {
                     Guard.ExitReadLock();
                 }
+
+                // non-guarded access
+                return details.IsStarted;
             }
 
             public static bool SetInRound(string group, bool inround)
             {
                 if (string.IsNullOrWhiteSpace(group)) return false;
 
+                GroupDetails details = null;
                 try
                 {
-                    Guard.EnterWriteLock();
-                    GroupDetails details = null;
+                    Guard.EnterReadLock();
                     if (!UserMap.TryGetValue(group, out details)) return false;
-                    details.InRound = inround;
-                    return true;
                 }
                 finally
                 {
-                    Guard.ExitWriteLock();
+                    Guard.ExitReadLock();
                 }
+
+                // non-guarded access
+                details.InRound = inround;
+                return true;
             }
 
             public static bool IsInRound(string group)
             {
                 if (string.IsNullOrWhiteSpace(group)) return false;
 
+                GroupDetails details = null;
                 try
                 {
-                    Guard.EnterWriteLock();
-                    GroupDetails details = null;
+                    Guard.EnterReadLock();
                     if (!UserMap.TryGetValue(group, out details)) return false;
-                    return details.InRound;
                 }
                 finally
                 {
-                    Guard.ExitWriteLock();
+                    Guard.ExitReadLock();
                 }
+
+                // non-guarded acccess
+                return details.InRound;
             }
 
             public static bool TryGetInRound(string group, out RoundDetails round)
@@ -396,20 +465,22 @@ namespace scribble.Server.Hubs
                 round = null;
                 if (string.IsNullOrWhiteSpace(group)) return false;
 
+                GroupDetails details = null;
                 try
                 {
                     Guard.EnterReadLock();
-                    GroupDetails details = null;
                     if (!UserMap.TryGetValue(group, out details)) return false;
-                    if (details.InRound)
-                    {
-                        round = details.Current;
-                        return true;
-                    }
                 }
                 finally
                 {
                     Guard.ExitReadLock();
+                }
+
+                // non-guarded access
+                if (details.InRound)
+                {
+                    round = details.Current;
+                    return true;
                 }
 
                 return false;
@@ -422,11 +493,19 @@ namespace scribble.Server.Hubs
 
                 if (string.IsNullOrWhiteSpace(group)) return false;
 
+                GroupDetails details = null;
                 try
                 {
-                    Guard.EnterWriteLock();
-                    GroupDetails details = null;
+                    Guard.EnterReadLock();
                     if (!UserMap.TryGetValue(group, out details)) return false;
+                }
+                finally
+                {
+                    Guard.ExitReadLock();
+                }
+                try
+                {
+                    details.InstanceGuard.EnterWriteLock();
                     if (details.Connections.Count == 0) return false;
                     if (details.Words.Count == 0) return false;
 
@@ -480,39 +559,29 @@ namespace scribble.Server.Hubs
                 }
                 finally
                 {
-                    Guard.ExitWriteLock();
+                    details.InstanceGuard.ExitWriteLock();
                 }
 
                 return true;
             }
 
-            public static RoundDetails GetNextRound(string group)
+            public static bool AddRoundDetails(string group, string[] words, int timeoutseconds)
             {
-                if (string.IsNullOrWhiteSpace(group)) return null;
+                if (string.IsNullOrWhiteSpace(group) || words == null || words.Length == 0) return false;
 
+                GroupDetails details = null;
                 try
                 {
                     Guard.EnterReadLock();
-                    GroupDetails details = null;
-                    if (!UserMap.TryGetValue(group, out details)) return null;
-                    if (!details.InRound) return null;
-                    return details.Current;
+                    if (!UserMap.TryGetValue(group, out details)) return false;
                 }
                 finally
                 {
                     Guard.ExitReadLock();
                 }
-            }
-
-            public static bool AddRoundDetails(string group, string[] words, int timeoutseconds)
-            {
-                if (string.IsNullOrWhiteSpace(group) || words == null || words.Length == 0) return false;
-                
                 try
                 {
-                    Guard.EnterWriteLock();
-                    GroupDetails details = null;
-                    if (!UserMap.TryGetValue(group, out details)) return false;
+                    details.InstanceGuard.EnterWriteLock();
                     if (details.Words.Count > 0) details.Words.Clear();
                     details.Words.AddRange(words);
                     details.TimeoutSeconds = timeoutseconds;
@@ -520,7 +589,7 @@ namespace scribble.Server.Hubs
                 }
                 finally
                 {
-                    Guard.ExitWriteLock();
+                    details.InstanceGuard.ExitWriteLock();
                 }
 
                 return true;
@@ -530,21 +599,37 @@ namespace scribble.Server.Hubs
             {
                 if (string.IsNullOrWhiteSpace(connectionId) || string.IsNullOrWhiteSpace(group) || string.IsNullOrWhiteSpace(username)) return false;
 
+                GroupDetails details = null;
                 try
                 {
-                    Guard.EnterWriteLock();
-                    GroupDetails details = null;
+                    Guard.EnterUpgradeableReadLock();
                     if (!UserMap.TryGetValue(group, out details))
                     {
                         details = new GroupDetails(owner: connectionId);
-                        UserMap.Add(group, details);
+                        try
+                        {
+                            Guard.EnterWriteLock();
+                            UserMap.Add(group, details);
+                        }
+                        finally
+                        {
+                            Guard.ExitWriteLock();
+                        }
                     }
+                }
+                finally
+                {
+                    Guard.ExitUpgradeableReadLock();
+                }
+                try
+                {
+                    details.InstanceGuard.EnterWriteLock();
                     if (!details.Connections.ContainsKey(connectionId)) details.Connections.Add(connectionId, new UserDetails() { Username = username });
                     else details.Connections[connectionId].Username = username;
                 }
                 finally
                 {
-                    Guard.ExitWriteLock();
+                    details.InstanceGuard.ExitWriteLock();
                 }
 
                 return true;
@@ -554,17 +639,25 @@ namespace scribble.Server.Hubs
             {
                 if (string.IsNullOrWhiteSpace(connectionId) || string.IsNullOrWhiteSpace(group)) return "";
 
+                GroupDetails details = null;
                 try
                 {
                     Guard.EnterReadLock();
-                    GroupDetails details = null;
                     if (!UserMap.TryGetValue(group, out details)) return "";
+                }
+                finally
+                {
+                    Guard.ExitReadLock();
+                }
+                try
+                {
+                    details.InstanceGuard.EnterReadLock();
                     if (details.Connections.TryGetValue(connectionId, out UserDetails user)) return user.Username;
                     return "";
                 }
                 finally
                 {
-                    Guard.ExitReadLock();
+                    details.InstanceGuard.ExitReadLock();
                 }
             }
 
@@ -573,17 +666,24 @@ namespace scribble.Server.Hubs
                 var users = new List<UserDetails>();
                 if (string.IsNullOrWhiteSpace(group)) return users;
 
+                GroupDetails details = null;
                 try
                 {
                     Guard.EnterReadLock();
-                    if (UserMap.TryGetValue(group, out GroupDetails details))
-                    {
-                        foreach (var user in details.Connections.Values) users.Add(user);
-                    }
+                    if (!UserMap.TryGetValue(group, out details)) return users;
                 }
                 finally
                 {
                     Guard.ExitReadLock();
+                }
+                try
+                {
+                    details.InstanceGuard.EnterReadLock();
+                    foreach (var user in details.Connections.Values) users.Add(user);
+                }
+                finally
+                {
+                    details.InstanceGuard.ExitReadLock();
                 }
 
                 return users;
@@ -594,21 +694,28 @@ namespace scribble.Server.Hubs
                 ownerconnectionid = "";
                 if (string.IsNullOrWhiteSpace(group)) return false;
 
+                GroupDetails details = null;
                 try
                 {
                     Guard.EnterReadLock();
-                    if (!UserMap.TryGetValue(group, out GroupDetails details)) return false;
-                    ownerconnectionid = details.OwnerConnectionId;
-                    return true;
+                    if (!UserMap.TryGetValue(group, out details)) return false;
                 }
                 finally
                 {
                     Guard.ExitReadLock();
                 }
+
+                // non-guared access
+                ownerconnectionid = details.OwnerConnectionId;
+                return true;
             }
 
             #region private
+            // static
             private static ReaderWriterLockSlim Guard = new ReaderWriterLockSlim();
+
+            // instance
+            private ReaderWriterLockSlim InstanceGuard;
             private List<string> Words;
             private int NextWordIndex;
             private int TimeoutSeconds;

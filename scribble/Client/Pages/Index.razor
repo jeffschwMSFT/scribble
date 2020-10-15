@@ -196,7 +196,6 @@
             {
                 Users.Clear();
                 foreach (var u in users.Split(',')) Users.Add(u);
-                Messages.Add("got users");
                 StateHasChanged();
             });
 
@@ -249,7 +248,7 @@
                 HubCanDraw = false;
                 CountDown.Stop();
                 GameState = GameStateType.Waiting;
-                Messages.Add("DONE");
+                Messages.Add("**** round complete ****");
                 StateHasChanged();
             });
 
