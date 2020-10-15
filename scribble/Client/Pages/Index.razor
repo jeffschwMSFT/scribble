@@ -1,0 +1,456 @@
+﻿@page "/"
+@using System.Text;
+@using Blazor.Extensions.Canvas.Canvas2D;
+@using Blazor.Extensions;
+@using Microsoft.AspNetCore.SignalR.Client;
+@using Microsoft.AspNetCore.Http;
+@using System.Security.Claims;
+@using Microsoft.AspNetCore.Authorization;
+@using System.Timers; 
+@inject IJSRuntime JSRuntime
+@inject NavigationManager NavigationManager
+@implements IDisposable
+
+<div class="page">
+    <div class="main" name="mainPanel" hidden="@(Scene != SceneType.Main)">
+        <button @onclick="GotoNextScene">Create game</button> <br />
+        Words to choose from:<br />
+        <textarea @bind="WordInput" rows="10"/><br />
+        Turn timer <input @bind="TimeoutInput" type="number" min=30 max=1024/><br />
+        <br />
+        Join Game (tbd)
+    </div>
+
+    <div class="main" name="picknamePanel" hidden="@(Scene != SceneType.PickName)">
+        <input @bind="UsernameInput" size="50"/><br />
+        <p style="font-size:9px">Usernames with ',' (coma), ':' (colon), or '&lt;' (lt) are not allowed</p>
+        <button @onclick="GotoNextScene">Join Game</button>
+    </div>
+
+    <div style="float: left; width: 400px; height: 100%; border: double;" name="joinPanel" hidden="@(Scene != SceneType.Lobby && Scene != SceneType.Play)">
+        Hello @UsernameInput<br />
+        <p hidden="@(Scene != SceneType.Lobby)">Waiting for other players...</p>
+        <p hidden="@(Scene != SceneType.Play || !IsOwner)">Select 'Draw' to choose the next player to draw</p>
+        <table border="1" cellpadding="5">
+            <tr><th>Player</th><th>Score</th></tr>
+            @foreach (var user in Users)
+            {
+                // enoded as 'username:score'
+                var parts = user.Split(':');
+                <tr>
+                    <th>@(parts.Length >= 1 ? parts[0] : "")</th>
+                    <td>@(parts.Length >= 2 ? parts[1] : "0")</td>
+                </tr>
+            }
+        </table><br />
+        <button @onclick="StartNextRound" hidden="@(Scene != SceneType.Play || !IsOwner || GameState != GameStateType.Waiting)">Draw</button>
+        <button @onclick="GotoNextScene" hidden="@(Scene != SceneType.Lobby || !IsOwner)">Start</button>
+    </div>
+
+    <div style="float: left; border: double;" name="gamePanel" hidden="@(Scene != SceneType.Play)">
+        <h1><label>@WordToDraw</label></h1>
+        <h2><label>by @PlayerDrawing in @WordTimeout seconds</label></h2>
+        <div id="canvas" tabindex="0" @onmouseup="e => MouseUp(e)" @onmousedown="e => MouseDown(e)" @onmousemove="e => MouseMove(e)" @ontouchstart="e => TouchDown(e)" @ontouchend="e => TouchUp(e)" @ontouchmove="e => TouchMove(e)">
+            <BECanvas Width="@Width" Height="@Height" @ref="CanvasReference"></BECanvas>
+        </div>
+
+        <div class="form-group">
+            Color: <select @bind="ColorInput">
+                <option value="rgba(255,0,0,1.0)" selected="selected">red</option>
+                <option value="rgba(0,255,0,1.0)">green</option>
+                <option value="rgba(0,0,255,1.0)">blue</option>
+                <option value="rgba(0,0,0,1.0)">black</option>
+                <option value="rgba(255,255,255,1.0)">white</option>
+            </select>
+            Size: <select @bind="DiameterInput">
+                <option value=5 selected="selected">small</option>
+                <option value=10>medium</option>
+                <option value=20>large</option>
+            </select>
+            <button @onclick="SendClear">Clear</button>
+            <br />
+        </div>
+        <div class="form-group">
+            <label>
+                Message:
+                <input @bind="MessageInput" size="50" />
+            </label>
+        </div>
+        <button @onclick="SendMessage">Send</button>
+        <hr>
+
+        <ul id="messagesList">
+            @foreach (var message in Messages)
+            {
+                <li>@message</li>
+            }
+        </ul>
+    </div>
+</div>
+
+@code {
+    //
+    // state
+    //
+    private HubConnection HubConnection;
+    private List<string> Messages = new List<string>();
+    private string MessageInput;
+    private string ColorInput = "rgba(255,0,0,1.0)";
+    private int DiameterInput = 5;
+    private const int Width = 500;
+    private const int Height = 300;
+    private string Group;
+    private enum SceneType { None, Main, PickName, Lobby, Play };
+    private SceneType Scene = SceneType.None;
+    private string UsernameInput;
+    private string WordInput;
+    private int TimeoutInput = 60;
+    private List<string> Users = new List<string>();
+    private Canvas2DContext Context;
+    private BECanvasComponent CanvasReference;
+    private double PreviousX = -1;
+    private double PreviousY = -1;
+    private bool DrawingPenIsDown = false;
+
+    // game play
+    private bool HubCanDraw = false; // controled via Hub
+    private enum GameStateType { Waiting, InRound};
+    private GameStateType GameState = GameStateType.Waiting;
+    private string WordToDraw;
+    private string PlayerDrawing;
+    private int WordTimeout;
+    private Timer CountDown;
+
+    private bool IsOwner { get { return !string.IsNullOrWhiteSpace(WordInput); } }
+
+    // todo - if the owner leaves, there is no ability to transfer that to anyone else
+
+    //
+    // Scene state machine
+    //
+    //  Main -- Create or join
+    //   |
+    //   (has a group - via query string)
+    //   |
+    //  \/
+    //  PickName -- choose your name and join
+    //   |
+    //   (has a username -- via UsernameInput)
+    //   |
+    //  \/
+    //  Lobby -- waiting for everyone to join
+    //   |
+    //   (Owner: press Start button, Others: Hub[StartGame])
+    //   |
+    //  \/
+    //  Play -- the main game scene
+
+    //
+    // hub communication
+    //
+    Task SendMessage(string group, string message) => HubConnection?.SendAsync("SendMessage", group, message);
+    Task SendLine(double x1, double y1, double x2, double y2, string color, float diameter) => HubConnection?.SendAsync("SendLine", Group, x1.ToString(), y1.ToString(), x2.ToString(), y2.ToString(), color, diameter.ToString());
+    Task SendClear() => HubConnection?.SendAsync("SendClear", Group);
+    Task SendJoin(string group, string username) => HubConnection?.SendAsync("SendJoin", group, username);
+    Task SendStartGame(string group, int timeout, string seperator, string words) => HubConnection?.SendAsync("SendStartGame", group, timeout.ToString(), seperator, words);
+    Task SendNextRound(string group) => HubConnection?.SendAsync("SendNextRound", group);
+    Task SendRoundComplete(string group) => HubConnection?.SendAsync("SendRoundComplete", group);
+    public bool IsConnected => HubConnection?.State == HubConnectionState.Connected;
+
+    //
+    // overloads
+    //
+    public void Dispose()
+    {
+        _ = HubConnection?.DisposeAsync();
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        // parse group name and determine the initial game state
+        var uriparts = NavigationManager.Uri.Split('?');
+        Group = "";
+        if (uriparts.Length >= 2) Group = uriparts[1];
+
+        // connect
+        if (HubConnection == null)
+        {
+            // connect to signalr
+            HubConnection = new HubConnectionBuilder()
+                .WithUrl(NavigationManager.ToAbsoluteUri("/updatehub"))
+                .Build();
+
+            HubConnection.On<string>("ReceiveMessage", (message) =>
+            {
+                Messages.Add($"{message}");
+                StateHasChanged();
+            });
+
+            HubConnection.On<string, string, string, string, string, string>("ReceiveLine", (x1, y1, x2, y2, color, diameter) =>
+            {
+                DrawLine(Convert.ToDouble(x1), Convert.ToDouble(y1), Convert.ToDouble(x2), Convert.ToDouble(y2), color, Convert.ToSingle(diameter));
+                StateHasChanged();
+            });
+
+            HubConnection.On<string>("ReceiveJoin", (users) =>
+            {
+                Users.Clear();
+                foreach (var u in users.Split(',')) Users.Add(u);
+                Messages.Add("got users");
+                StateHasChanged();
+            });
+
+            HubConnection.On("ReceiveClear", () =>
+            {
+                ClearScreen();
+                StateHasChanged();
+            });
+
+            HubConnection.On("ReceiveStartGame", () =>
+            {
+                // start the game
+                Scene = SceneType.Play;
+                StateHasChanged();
+            });
+
+            HubConnection.On<string,string,string,bool>("ReceiveNextRound", (player, timeout, word, candraw) =>
+            {
+                // check scene state
+                if (Scene == SceneType.PickName) return;
+                if (Scene == SceneType.Lobby) Scene = SceneType.Play;
+
+                // clear the screen
+                ClearScreen();
+
+                // setup the details
+                HubCanDraw = candraw;
+                WordToDraw = word;
+                WordTimeout = Convert.ToInt32(timeout);
+                PlayerDrawing = player;
+                GameState = GameStateType.InRound;
+                CountDown = new Timer(1000);
+                CountDown.Elapsed += async (sender, e) =>
+                {
+                    if (WordTimeout > 0) WordTimeout--;
+                    else
+                    {
+                        if (HubCanDraw || IsOwner) await SendRoundComplete(Group);
+                        CountDown.Stop();
+                    }
+                };
+                CountDown.Start();
+
+                // refesh
+                StateHasChanged();
+            });
+
+            HubConnection.On("ReceiveRoundComplete", () =>
+            {
+                HubCanDraw = false;
+                CountDown.Stop();
+                GameState = GameStateType.Waiting;
+                Messages.Add("DONE");
+                StateHasChanged();
+            });
+
+            await HubConnection.StartAsync();
+        }
+
+        await ChangeSceneState();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (Context == null)
+        {
+            Context = await CanvasReference.CreateCanvas2DAsync();
+            PreviousX = PreviousY = -1;
+            DrawingPenIsDown = false;
+        }
+    }
+
+    //
+    // scene state
+    //
+    private async Task ChangeSceneState()
+    {
+        if (Scene == SceneType.Lobby)
+        {
+            if (IsOwner)
+            {
+                // associate the words with this group
+                await SendStartGame(Group, TimeoutInput, "\n", WordInput);
+                Scene = SceneType.Play;
+            }
+        }
+        else if (!string.IsNullOrWhiteSpace(Group))
+        {
+            if (string.IsNullOrWhiteSpace(UsernameInput) || UsernameInput.IndexOf(',') >= 0 || UsernameInput.IndexOf('<') >= 0 || UsernameInput.IndexOf(':') >= 0)
+            {
+                UsernameInput = "<choose your character's name>";
+                Scene = SceneType.PickName;
+            }
+            else
+            {
+                await SendJoin(Group, UsernameInput);
+                Scene = SceneType.Lobby;
+            }
+        }
+        else
+        {
+            Scene = SceneType.Main;
+        }
+        // refresh
+        StateHasChanged();
+    }
+
+    private async void GotoNextScene()
+    {
+        if (string.IsNullOrWhiteSpace(Group))
+        {
+            if (string.IsNullOrWhiteSpace(WordInput) || WordInput.IndexOf('<') >= 0)
+            {
+                WordInput = "<include a set of words to draw>";
+                return;
+            }
+
+            // generate random group
+            var groupname = new StringBuilder(6);
+            var rand = new Random();
+            for (int i = 0; i < 6; i++)
+            {
+                if (rand.Next() % 2 == 0)
+                {
+                    // number
+                    groupname.Append((char)((rand.Next() % 10) + (int)'0'));
+                }
+                else
+                {
+                    // letter
+                    groupname.Append((char)((rand.Next() % 26) + (int)'a'));
+                }
+            }
+            Group = groupname.ToString();
+
+            NavigationManager.NavigateTo($"/?{Group}");
+        }
+        await ChangeSceneState();
+    }
+
+    //
+    // game play
+    //
+    private async void SendMessage()
+    {
+        if (Scene != SceneType.Play) return;
+        await SendMessage(Group, MessageInput);
+    }
+
+    private async void StartNextRound()
+    {
+        await SendNextRound(Group);
+    }
+
+    // 
+    // canvas
+    //
+
+    // todo touch
+
+    protected void TouchUp(TouchEventArgs e)
+    {
+        HandleUp();
+    }
+    protected void MouseUp(MouseEventArgs e)
+    {
+        HandleUp();
+    }
+    protected void HandleUp()
+    {
+        if (!HubCanDraw) return;
+        if (Scene != SceneType.Play) return;
+        if (Context == null) return;
+
+        // pick up the pen
+        PreviousX = PreviousY = -1;
+        DrawingPenIsDown = false;
+    }
+
+    protected void TouchDown(TouchEventArgs e)
+    {
+        if (e.Touches == null || e.Touches.Length == 0) return;
+        HandleDown(e.Touches[0].ScreenX, e.Touches[0].ScreenY);
+    }
+    protected void MouseDown(MouseEventArgs e)
+    {
+        HandleDown(e.OffsetX, e.OffsetY);
+    }
+    protected void HandleDown(double x, double y)
+    {
+        if (!HubCanDraw) return;
+        if (Scene != SceneType.Play) return;
+        if (Context == null) return;
+
+        // put down the pen
+        PreviousX = x;
+        PreviousY = y;
+        DrawingPenIsDown = true;
+    }
+
+    protected void TouchMove(TouchEventArgs e)
+    {
+        if (e.Touches == null || e.Touches.Length == 0) return;
+        HandleMove(e.Touches[0].ScreenX, e.Touches[0].ScreenY);
+    }
+    protected void MouseMove(MouseEventArgs e)
+    {
+        HandleMove(e.OffsetX, e.OffsetY);
+    }
+    protected async void HandleMove(double x, double y)
+    {
+        if (!HubCanDraw) return;
+        if (Scene != SceneType.Play) return;
+        if (PreviousX >= 0 && PreviousY >= 0 && DrawingPenIsDown)
+        {
+            // draw a point
+            DrawLine(PreviousX, PreviousY, x, y, ColorInput, DiameterInput);
+            await SendLine(PreviousX, PreviousY, x, y, ColorInput, DiameterInput);
+
+            // capture for next move
+            PreviousX = x;
+            PreviousY = y;
+        }
+    }
+
+    private async void DrawLine(double x1, double y1, double x2, double y2, string color, float diameter)
+    {
+        if (Scene != SceneType.Play) return;
+        if (Context == null) return;
+
+        await Context.BeginBatchAsync();
+        {
+            await Context.SetStrokeStyleAsync(color);
+            await Context.SetLineWidthAsync(diameter);
+            await Context.BeginPathAsync();
+            await Context.MoveToAsync(x1, y1);
+            await Context.LineToAsync(x2, y2);
+            await Context.StrokeAsync();
+        }
+        await Context.EndBatchAsync();
+    }
+
+    private async void ClearScreen()
+    {
+        if (Scene != SceneType.Play) return;
+        if (Context == null) return;
+
+        await Context.BeginBatchAsync();
+        {
+            await Context.SetFillStyleAsync("rgba(255,255,255,1.0)");
+            await Context.FillRectAsync(x: 0, y: 0, Width, Height);
+        }
+        await Context.EndBatchAsync();
+    }
+}
+
+
