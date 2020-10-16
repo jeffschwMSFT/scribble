@@ -39,7 +39,7 @@ namespace scribble.Server.Hubs
             // broadcast the updated group
             if (!string.IsNullOrWhiteSpace(group))
             {
-                await Clients.Group(group).SendAsync("ReceiveJoin", string.Join(",", GroupDetails.GetUsers(group).Select(u => $"{u.Username}:{u.Score}")));
+                await Clients.Group(group).SendAsync("ReceiveJoin", string.Join(",", GroupDetails.GetUsers(group).Select(u => $"{u.Username}:{u.Score:f1}")));
             }
 
             await base.OnDisconnectedAsync(exception);
@@ -47,6 +47,9 @@ namespace scribble.Server.Hubs
 
         public async Task SendStartGame(string group, string timeoutseconds, string seperator, string words)
         {
+            // set the owner
+            GroupDetails.SetOwner(group, Context.ConnectionId);
+
             // add words
             GroupDetails.AddRoundDetails(group, words.Split(seperator), Convert.ToInt32(timeoutseconds));
 
@@ -70,7 +73,7 @@ namespace scribble.Server.Hubs
             }
 
             // broadcast current players to everyone in the group
-            await Clients.Group(group).SendAsync("ReceiveJoin", string.Join(",", GroupDetails.GetUsers(group).Select(u => $"{u.Username}:{u.Score}")));
+            await Clients.Group(group).SendAsync("ReceiveJoin", string.Join(",", GroupDetails.GetUsers(group).Select(u => $"{u.Username}:{u.Score:f1}")));
 
             if (GroupDetails.IsInRound(group))
             {
@@ -90,10 +93,13 @@ namespace scribble.Server.Hubs
 
         public async Task SendMessage(string group, string message)
         {
+            if (string.IsNullOrWhiteSpace(message)) return;
+
             // get username
             GroupDetails.TryGetUsername(group, Context.ConnectionId, out string username);
 
             // check if we are in a round, and if so then check if this is a valid guess
+            var rounddone = false;
             if (GroupDetails.TryGetInRound(group, out RoundDetails round))
             {
                 // cannot guess for your own question or if you have already gotten it right
@@ -106,20 +112,23 @@ namespace scribble.Server.Hubs
                     if (string.Equals(message, round.Word, StringComparison.OrdinalIgnoreCase))
                     {
                         // give credit
-                        GroupDetails.AddToScore(group, Context.ConnectionId, (float)(round.End - round.Start).TotalSeconds);
+                        GroupDetails.AddToScore(group, Context.ConnectionId, (float)(round.End - DateTime.UtcNow).TotalSeconds);
                         // mark that you answered
                         GroupDetails.SetHasAnswered(group, Context.ConnectionId);
                         // return message indicating success
                         message = "correct :)";
                     }
                 }
+
+                // check if the round is done
+                GroupDetails.TryGetEndOfRound(group, out rounddone);
             }
 
             // send the message to everyone in this group
             await Clients.Group(group).SendAsync("ReceiveMessage", $"{username}: {message}");
 
             // finish early if done
-            if (GroupDetails.TryGetEndOfRound(group, out bool done) && done)
+            if (rounddone)
             {
                 await SendRoundComplete(group);
             }
@@ -134,7 +143,7 @@ namespace scribble.Server.Hubs
         public async Task SendClear(string group)
         {
             // send clear to everyone in this group
-            await Clients.Group(group).SendAsync("ReceiveClear");
+            await Clients.OthersInGroup(group).SendAsync("ReceiveClear");
         }
 
         public async Task SendNextRound(string group)
@@ -166,7 +175,7 @@ namespace scribble.Server.Hubs
             await Clients.Group(group).SendAsync("ReceiveRoundComplete");
 
             // refresh the user list (with scores)
-            await Clients.Group(group).SendAsync("ReceiveJoin", string.Join(",", GroupDetails.GetUsers(group).Select(u => $"{u.Username}:{u.Score}")));
+            await Clients.Group(group).SendAsync("ReceiveJoin", string.Join(",", GroupDetails.GetUsers(group).Select(u => $"{u.Username}:{u.Score:f1}")));
         }
 
         #region private
@@ -190,14 +199,14 @@ namespace scribble.Server.Hubs
             // container to keep lists of users in each group (static?)
             public static Dictionary<string /*group*/, GroupDetails> UserMap = new Dictionary<string, GroupDetails>();
 
-            public GroupDetails(string owner)
+            public GroupDetails()
             {
                 IsStarted = false;
                 TimeoutSeconds = 30;
                 Words = new List<string>();
                 Connections = new Dictionary<string, UserDetails>();
                 Current = null;
-                OwnerConnectionId = owner;
+                OwnerConnectionId = "";
                 HasAnswered = new HashSet<string>();
                 NextWordIndex = 0;
                 HasDrawn = new HashSet<string>();
@@ -551,7 +560,7 @@ namespace scribble.Server.Hubs
 
                     // set valid time zones
                     details.Current.Start = DateTime.UtcNow;
-                    details.Current.End = details.Current.Start.AddSeconds(details.Current.Timeout + 2);
+                    details.Current.End = details.Current.Start.AddSeconds(details.Current.Timeout);
 
                     // mark that we are in a round
                     details.InRound = true;
@@ -607,7 +616,7 @@ namespace scribble.Server.Hubs
                     Guard.EnterUpgradeableReadLock();
                     if (!UserMap.TryGetValue(group, out details))
                     {
-                        details = new GroupDetails(owner: connectionId);
+                        details = new GroupDetails();
                         try
                         {
                             Guard.EnterWriteLock();
@@ -750,6 +759,26 @@ namespace scribble.Server.Hubs
 
                 // non-guared access
                 ownerconnectionid = details.OwnerConnectionId;
+                return true;
+            }
+
+            public static bool SetOwner(string group, string ownerconnectionid)
+            {
+                if (string.IsNullOrWhiteSpace(group)) return false;
+
+                GroupDetails details = null;
+                try
+                {
+                    Guard.EnterReadLock();
+                    if (!UserMap.TryGetValue(group, out details)) return false;
+                }
+                finally
+                {
+                    Guard.ExitReadLock();
+                }
+
+                // non-guared access
+                details.OwnerConnectionId = ownerconnectionid;
                 return true;
             }
 
