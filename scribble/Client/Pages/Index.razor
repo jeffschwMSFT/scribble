@@ -11,9 +11,6 @@
 @inject NavigationManager NavigationManager
 @implements IDisposable
 
-<!-- todo remove pickname -->
-<!-- add free draw -->
-
 <div class="page" style="height: 100%; width: 100%;">
     <div class="main" name="mainPanel" hidden="@(Scene != SceneType.Main)">
         <button @onclick="GotoNextScene">Create game</button> <br />
@@ -31,7 +28,7 @@
     </div>
 
     <div style="float: left; width: 300px; height: 100%; border: double;" name="joinPanel" hidden="@(Scene != SceneType.Play)">
-        Hello @(UsernameInput.Length < 20 ? UsernameInput : UsernameInput.Substring(0,20))<br />
+        Hello @(UsernameInput)<br />
         <div id="scrollbox" style="height: 600px;overflow: scroll;">
             <table border="1" cellpadding="5">
                 <tr><th>Player</th><th>Score</th></tr>
@@ -40,7 +37,7 @@
                     // enoded as 'username:score'
                     var parts = user.Split(':');
                     <tr>
-                        <th>@(parts.Length >= 1 ? (parts[0].Length < 20 ? parts[0] : parts[0].Substring(0,20)) : "")</th>
+                        <th>@(parts.Length >= 1 ? parts[0] : "")</th>
                         <td>@(parts.Length >= 2 ? parts[1] : "0")</td>
                     </tr>
                 }
@@ -105,6 +102,7 @@
     private int DiameterInput = 5;
     private const int Width = 500;
     private const int Height = 300;
+    private const int MaxUsernameLength = 20;
     private string Group;
     private enum SceneType { None, Main, Lobby, Play };
     private SceneType Scene = SceneType.None;
@@ -295,6 +293,12 @@
             }
             else
             {
+                // truncate the name (if necessary)
+                if (UsernameInput.Length > MaxUsernameLength)
+                {
+                    UsernameInput = $"{UsernameInput.Substring(0, MaxUsernameLength-3)}...";
+                }
+
                 // join the game
                 await SendJoin(Group, UsernameInput);
 

@@ -75,15 +75,15 @@ namespace scribble.Server.Hubs
             // broadcast current players to everyone in the group
             await Clients.Group(group).SendAsync("ReceiveJoin", string.Join(",", GroupDetails.GetUsers(group).Select(u => $"{u.Username}:{u.Score:f1}")));
 
-            if (GroupDetails.IsInRound(group))
+            // check if a round is in flight
+            GroupDetails.TryGetInRound(group, out bool inround, out RoundDetails round);
+            if (inround && round != null)
             {
-                // todo the timeout will be wrong
-                if (GroupDetails.TryGetInRound(group, out RoundDetails round))
-                {
-                    await Clients.Client(Context.ConnectionId).SendAsync("ReceiveNextRound", round.Username, round.Timeout.ToString(), round.ObfuscatedWord, false /* candraw */);
-                    return;
-                }
+                await Clients.Client(Context.ConnectionId).SendAsync("ReceiveNextRound", round.Username, round.Timeout.ToString(), round.ObfuscatedWord, false /* candraw */);
+                return;
             }
+
+            // make sure the player get the game start notification
             if (GroupDetails.IsGroupStarted(group))
             {
                 // send the game start inidcator
@@ -99,36 +99,34 @@ namespace scribble.Server.Hubs
             GroupDetails.TryGetUsername(group, Context.ConnectionId, out string username);
 
             // check if we are in a round, and if so then check if this is a valid guess
-            var rounddone = false;
-            if (GroupDetails.TryGetInRound(group, out RoundDetails round))
+            GroupDetails.TryGetInRound(group, out bool inround, out RoundDetails round);
+            if (inround && round != null)
             {
-                // cannot guess for your own question or if you have already gotten it right
-                if (!GroupDetails.TryGetHasAnswered(group, Context.ConnectionId, out bool answered) || answered) return;
-
-                // check if the round is still valid
-                if (DateTime.UtcNow > round.Start && DateTime.UtcNow < round.End)
+                // check if this guess is currect
+                if (string.Equals(message, round.Word, StringComparison.OrdinalIgnoreCase))
                 {
-                    // check if this guess is currect
-                    if (string.Equals(message, round.Word, StringComparison.OrdinalIgnoreCase))
+                    // cannot guess for your own question or if you have already gotten it right
+                    if (GroupDetails.TryGetHasAnswered(group, Context.ConnectionId, out bool answered) && !answered)
                     {
                         // give credit
                         GroupDetails.AddToScore(group, Context.ConnectionId, (float)(round.End - DateTime.UtcNow).TotalSeconds);
                         // mark that you answered
                         GroupDetails.SetHasAnswered(group, Context.ConnectionId);
-                        // return message indicating success
-                        message = "correct :)";
                     }
-                }
 
-                // check if the round is done
-                GroupDetails.TryGetEndOfRound(group, out rounddone);
+                    // return message indicating success
+                    message = "correct :)";
+
+                    // check again
+                    GroupDetails.TryGetInRound(group, out inround, out round);
+                }
             }
 
             // send the message to everyone in this group
             await Clients.Group(group).SendAsync("ReceiveMessage", $"{username}: {message}");
 
             // finish early if done
-            if (rounddone)
+            if (!inround)
             {
                 await SendRoundComplete(group);
             }
@@ -268,48 +266,6 @@ namespace scribble.Server.Hubs
                 }
 
                 return connectionsGroup;
-            }
-
-            public static bool TryGetEndOfRound(string group, out bool done)
-            {
-                done = false;
-                if (string.IsNullOrWhiteSpace(group)) return false;
-
-                GroupDetails details = null;
-                try
-                {
-                    Guard.EnterReadLock();
-                    if (!UserMap.TryGetValue(group, out details)) return false;
-                }
-                finally
-                {
-                    Guard.ExitReadLock();
-                }
-                try
-                {
-                    details.InstanceGuard.EnterReadLock();
-                    if (details.Connections.Count != details.HasAnswered.Count)
-                    {
-                        done = false;
-                        return true;
-                    }
-                    // check that all the connections are present in answered
-                    foreach (var conn in details.Connections.Keys)
-                    {
-                        if (!details.HasAnswered.Contains(conn))
-                        {
-                            done = false;
-                            return true;
-                        }
-                    }
-                    // they are all present
-                    done = true;
-                    return true;
-                }
-                finally
-                {
-                    details.InstanceGuard.ExitReadLock();
-                }
             }
 
             public static bool AddToScore(string group, string connectionId, float score)
@@ -452,28 +408,10 @@ namespace scribble.Server.Hubs
                 return true;
             }
 
-            public static bool IsInRound(string group)
-            {
-                if (string.IsNullOrWhiteSpace(group)) return false;
-
-                GroupDetails details = null;
-                try
-                {
-                    Guard.EnterReadLock();
-                    if (!UserMap.TryGetValue(group, out details)) return false;
-                }
-                finally
-                {
-                    Guard.ExitReadLock();
-                }
-
-                // non-guarded acccess
-                return details.InRound;
-            }
-
-            public static bool TryGetInRound(string group, out RoundDetails round)
+            public static bool TryGetInRound(string group, out bool inround, out RoundDetails round)
             {
                 round = null;
+                inround = false;
                 if (string.IsNullOrWhiteSpace(group)) return false;
 
                 GroupDetails details = null;
@@ -487,14 +425,52 @@ namespace scribble.Server.Hubs
                     Guard.ExitReadLock();
                 }
 
-                // non-guarded access
-                if (details.InRound)
+                // first exit early if not in a round
+                if (!details.InRound)
                 {
-                    round = details.Current;
+                    inround = false;
                     return true;
                 }
 
-                return false;
+                // second check if we are within the time limit of this round
+                if (DateTime.UtcNow < details.Current.Start || DateTime.UtcNow > details.Current.End)
+                {
+                    inround = false;
+                    return true;
+                }
+
+                try
+                {
+                    details.InstanceGuard.EnterReadLock();
+
+                    // third do a quick check if the number of players is not the same as answered
+                    if (details.Connections.Count != details.HasAnswered.Count)
+                    {
+                        round = details.Current;
+                        inround = true;
+                        return true;
+                    }
+
+                    // fourth check that all the connections are present in answered
+                    foreach (var conn in details.Connections.Keys)
+                    {
+                        if (!details.HasAnswered.Contains(conn))
+                        {
+                            // this player has not answered yet
+                            round = details.Current;
+                            inround = true;
+                            return true;
+                        }
+                    }
+
+                    // everyone has answered
+                    inround = false;
+                    return true;
+                }
+                finally
+                {
+                    details.InstanceGuard.ExitReadLock();
+                }
             }
 
             public static bool SetupNextRound(string group, out RoundDetails round)
