@@ -11,6 +11,8 @@
 @inject NavigationManager NavigationManager
 @implements IDisposable
 
+// todo submit on enter
+
 <div class="page" style="height: 100%; width: 100%;">
     <div class="main" name="mainPanel" hidden="@(Scene != SceneType.Main)">
         <button @onclick="GotoNextScene">Create game</button> <br />
@@ -110,11 +112,6 @@
     private string WordInput;
     private int TimeoutInput = 60;
     private List<string> Users = new List<string>();
-    private Canvas2DContext Context;
-    private BECanvasComponent CanvasReference;
-    private double PreviousX = -1;
-    private double PreviousY = -1;
-    private bool DrawingPenIsDown = false;
 
     // game play
     private bool HubCanDraw = false; // controled via Hub
@@ -125,10 +122,13 @@
     private int WordTimeout;
     private Timer CountDown;
     private bool PracticeDrawingMode;
+    private double PreviousX = -1;
+    private double PreviousY = -1;
+    private bool DrawingPenIsDown = false;
+    private Canvas2DContext Context;
+    private BECanvasComponent CanvasReference;
 
     private bool IsOwner { get { return !string.IsNullOrWhiteSpace(WordInput); } }
-
-    // todo - if the owner leaves, there is no ability to transfer that to anyone else
 
     //
     // Scene state machine
@@ -288,7 +288,7 @@
         {
             if (string.IsNullOrWhiteSpace(UsernameInput) || UsernameInput.IndexOf(',') >= 0 || UsernameInput.IndexOf('<') >= 0 || UsernameInput.IndexOf(':') >= 0)
             {
-                if (Scene == SceneType.Lobby) UsernameInput = "<choose your character's name>";
+                if (Scene == SceneType.Lobby) UsernameInput = "<choose your user name>";
                 Scene = SceneType.Lobby;
             }
             else

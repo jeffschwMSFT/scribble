@@ -20,4 +20,8 @@
     <PackageReference Include="Microsoft.Identity.Web.UI" Version="0.3.1-preview" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Folder Include="Controllers\" />
+  </ItemGroup>
+
 </Project>

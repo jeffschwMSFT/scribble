@@ -23,7 +23,7 @@ namespace scribble.Server.Hubs
         {
             GroupDetails.TryGetUsername(Context.ConnectionId, out string group, out string username);
 
-            // todo what if the owner drops?
+            // what if the owner drops?
             if (!string.IsNullOrWhiteSpace(group) && GroupDetails.TryGetOwner(group, out string ownerconnectionid))
             {
                 if (string.Equals(Context.ConnectionId, ownerconnectionid, StringComparison.OrdinalIgnoreCase))
@@ -51,10 +51,18 @@ namespace scribble.Server.Hubs
             GroupDetails.SetOwner(group, Context.ConnectionId);
 
             // add words
-            GroupDetails.AddRoundDetails(group, words.Split(seperator), Convert.ToInt32(timeoutseconds));
+            if (!GroupDetails.AddRoundDetails(group, words.Split(seperator), Convert.ToInt32(timeoutseconds)))
+            {
+                await Clients.Group(group).SendAsync("ReceiveMessage", "failed to set game details");
+                return;
+            }
 
             // mark that this group has already started
-            GroupDetails.SetGroupStarted(group, isstarted: true);
+            if (!GroupDetails.SetGroupStarted(group, isstarted: true))
+            {
+                await Clients.Group(group).SendAsync("ReceiveMessage", $"failed to start game");
+                return;
+            }
 
             // notify everyone else to start game
             await Clients.OthersInGroup(group).SendAsync("ReceiveStartGame");
@@ -99,6 +107,7 @@ namespace scribble.Server.Hubs
             GroupDetails.TryGetUsername(group, Context.ConnectionId, out string username);
 
             // check if we are in a round, and if so then check if this is a valid guess
+            var completeroundearly = false;
             GroupDetails.TryGetInRound(group, out bool inround, out RoundDetails round);
             if (inround && round != null)
             {
@@ -119,6 +128,10 @@ namespace scribble.Server.Hubs
 
                     // check again
                     GroupDetails.TryGetInRound(group, out inround, out round);
+
+                    // check if the round should end early
+                    // eg. it flipped from inround to !inround
+                    completeroundearly = !inround;
                 }
             }
 
@@ -126,7 +139,7 @@ namespace scribble.Server.Hubs
             await Clients.Group(group).SendAsync("ReceiveMessage", $"{username}: {message}");
 
             // finish early if done
-            if (!inround)
+            if (completeroundearly)
             {
                 await SendRoundComplete(group);
             }
@@ -134,12 +147,24 @@ namespace scribble.Server.Hubs
 
         public async Task SendLine(string group, string x1, string y1, string x2, string y2, string color, string diameter)
         {
+            // ensure this person is the drawer
+            GroupDetails.TryGetInRound(group, out bool inround, out RoundDetails round);
+
+            // exit if this client is not allowed to draw across all the screens
+            if (!inround || !string.Equals(Context.ConnectionId, round.ConnectionId, StringComparison.OrdinalIgnoreCase)) return;
+
             // send the point to everyone (except the sender) in this group
             await Clients.OthersInGroup(group).SendAsync("ReceiveLine", x1, y1, x2, y2, color, diameter);
         }
 
         public async Task SendClear(string group)
         {
+            // ensure this person is the drawer
+            GroupDetails.TryGetInRound(group, out bool inround, out RoundDetails round);
+
+            // exit if this client is not allowed to draw across all the screens
+            if (!inround || !string.Equals(Context.ConnectionId, round.ConnectionId, StringComparison.OrdinalIgnoreCase)) return;
+
             // send clear to everyone in this group
             await Clients.OthersInGroup(group).SendAsync("ReceiveClear");
         }
@@ -147,7 +172,7 @@ namespace scribble.Server.Hubs
         public async Task SendNextRound(string group)
         {
             // choose details about the next round
-            if (!GroupDetails.SetupNextRound(group, out RoundDetails round))
+            if (!GroupDetails.StartNextRound(group, out RoundDetails round))
             {
                 await Clients.Group(group).SendAsync("ReceiveMessage", "failed to start round");
                 return;
@@ -194,7 +219,7 @@ namespace scribble.Server.Hubs
         }
         class GroupDetails
         {
-            // container to keep lists of users in each group (static?)
+            // container to keep lists of users in each group
             public static Dictionary<string /*group*/, GroupDetails> UserMap = new Dictionary<string, GroupDetails>();
 
             public GroupDetails()
@@ -432,16 +457,16 @@ namespace scribble.Server.Hubs
                     return true;
                 }
 
-                // second check if we are within the time limit of this round
-                if (DateTime.UtcNow < details.Current.Start || DateTime.UtcNow > details.Current.End)
-                {
-                    inround = false;
-                    return true;
-                }
-
                 try
                 {
                     details.InstanceGuard.EnterReadLock();
+
+                    // second check if we are within the time limit of this round
+                    if (DateTime.UtcNow < details.Current.Start || DateTime.UtcNow > details.Current.End)
+                    {
+                        inround = false;
+                        return true;
+                    }
 
                     // third do a quick check if the number of players is not the same as answered
                     if (details.Connections.Count != details.HasAnswered.Count)
@@ -473,7 +498,7 @@ namespace scribble.Server.Hubs
                 }
             }
 
-            public static bool SetupNextRound(string group, out RoundDetails round)
+            public static bool StartNextRound(string group, out RoundDetails round)
             {
                 var rand = new Random();
                 round = null;

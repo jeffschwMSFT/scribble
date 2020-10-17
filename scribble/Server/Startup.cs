@@ -15,8 +15,8 @@ namespace scribble.Server
 {
     public class Startup
     {
-        // todo
-        private const bool IS_AUTH = false;
+        // todo REMOVE
+        private const bool IS_AUTH = true;
 
         public Startup(IConfiguration configuration)
         {
@@ -39,11 +39,18 @@ namespace scribble.Server
             services.AddRazorPages();
             services.AddSignalR();
             services.AddHttpContextAccessor();
+
+            services.AddResponseCompression(opts =>
+            {
+                opts.MimeTypes = ResponseCompressionDefaults.MimeTypes.Concat(new[] { "application/octet-stream" });
+            });
         }
 
         // This method gets called by the runtime. Use this method to configure the HTTP request pipeline.
         public void Configure(IApplicationBuilder app, IWebHostEnvironment env)
         {
+            app.UseResponseCompression();
+
             if (env.IsDevelopment())
             {
                 app.UseDeveloperExceptionPage();
