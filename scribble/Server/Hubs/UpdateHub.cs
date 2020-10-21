@@ -29,7 +29,12 @@ namespace scribble.Server.Hubs
                 if (string.Equals(Context.ConnectionId, ownerconnectionid, StringComparison.OrdinalIgnoreCase))
                 {
                     // ugh
-                    await SendMessage(group, "sorry I left the game and no more rounds can be played");
+                    await SendMessage(group, "I left the game and no more rounds can be played (sorry)");
+                }
+                else
+                {
+                    // notify that you left
+                    await SendMessage(group, $"I left the game");
                 }
             }
 
@@ -111,6 +116,8 @@ namespace scribble.Server.Hubs
             GroupDetails.TryGetInRound(group, out bool inround, out RoundDetails round);
             if (inround && round != null)
             {
+                // todo check if the word is contained in the reply
+
                 // check if this guess is currect
                 if (string.Equals(message, round.Word, StringComparison.OrdinalIgnoreCase))
                 {
@@ -661,7 +668,7 @@ namespace scribble.Server.Hubs
                     {
                         try
                         {
-                            kvp.Value.InstanceGuard.ExitReadLock();
+                            kvp.Value.InstanceGuard.EnterReadLock();
                             if (kvp.Value.Connections.TryGetValue(connectionId, out UserDetails user))
                             {
                                 group = kvp.Key;

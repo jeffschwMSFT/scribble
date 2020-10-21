@@ -26,10 +26,10 @@ namespace scribble.Client
             builder.Services.AddScoped(sp => sp.GetRequiredService<IHttpClientFactory>().CreateClient("scribble.ServerAPI"));
 
             builder.Services.AddMsalAuthentication(options =>
-            {
-                builder.Configuration.Bind("AzureAd", options.ProviderOptions.Authentication);
-                options.ProviderOptions.DefaultAccessTokenScopes.Add("api://scribble_server/user_impersonation");
-            });
+                {
+                    builder.Configuration.Bind("AzureAd", options.ProviderOptions.Authentication);
+                    //options.ProviderOptions.DefaultAccessTokenScopes.Add("https://microsoft.onmicrosoft.com/scribble/user_impersonation");
+                });
 
             await builder.Build().RunAsync();
         }

@@ -6,19 +6,19 @@
 @using Microsoft.AspNetCore.Http;
 @using System.Security.Claims;
 @using Microsoft.AspNetCore.Authorization;
-@using System.Timers; 
+@using System.Timers;
 @inject IJSRuntime JSRuntime
 @inject NavigationManager NavigationManager
 @implements IDisposable
 
-// todo submit on enter
+<!-- todo submit on enter -->
 
 <div class="page" style="height: 100%; width: 100%;">
     <div class="main" name="mainPanel" hidden="@(Scene != SceneType.Main)">
         <button @onclick="GotoNextScene">Create game</button> <br />
         Words to choose from:<br />
-        <textarea @bind="WordInput" rows="10"/><br />
-        Turn timer <input @bind="TimeoutInput" type="number" min=30 max=1024/><br />
+        <textarea @bind="WordInput" rows="10" /><br />
+        Turn timer <input @bind="TimeoutInput" type="number" min=30 max=1024 /><br />
         <br />
         Join Game (tbd)
     </div>
@@ -115,7 +115,7 @@
 
     // game play
     private bool HubCanDraw = false; // controled via Hub
-    private enum GameStateType { Waiting, Playing};
+    private enum GameStateType { Waiting, Playing };
     private GameStateType GameState = GameStateType.Waiting;
     private string WordToDraw;
     private string PlayerDrawing;
@@ -214,8 +214,8 @@
                 StateHasChanged();
             });
 
-            HubConnection.On<string,string,string,bool>("ReceiveNextRound", (player, timeout, word, candraw) =>
-            {
+            HubConnection.On<string, string, string, bool>("ReceiveNextRound", (player, timeout, word, candraw) =>
+               {
                 // check scene state
                 if (Scene == SceneType.Lobby) return;
 
@@ -224,28 +224,28 @@
 
                 // setup the details
                 PracticeDrawingMode = false;
-                HubCanDraw = candraw;
-                WordToDraw = word;
-                WordTimeout = Convert.ToInt32(timeout);
-                PlayerDrawing = player;
-                GameState = GameStateType.Playing;
-                CountDown = new Timer(1000);
-                CountDown.Elapsed += async (sender, e) =>
-                {
-                    if (WordTimeout > 0) WordTimeout--;
-                    else
-                    {
-                        if (HubCanDraw || IsOwner) await SendRoundComplete(Group);
-                        CountDown.Stop();
-                    }
-                    // refresh
-                    StateHasChanged();
-                };
-                CountDown.Start();
+                   HubCanDraw = candraw;
+                   WordToDraw = word;
+                   WordTimeout = Convert.ToInt32(timeout);
+                   PlayerDrawing = player;
+                   GameState = GameStateType.Playing;
+                   CountDown = new Timer(1000);
+                   CountDown.Elapsed += async (sender, e) =>
+                   {
+                       if (WordTimeout > 0) WordTimeout--;
+                       else
+                       {
+                           if (HubCanDraw || IsOwner) await SendRoundComplete(Group);
+                           CountDown.Stop();
+                       }
+                       // refresh
+                       StateHasChanged();
+                   };
+                   CountDown.Start();
 
                 // refesh
                 StateHasChanged();
-            });
+               });
 
             HubConnection.On("ReceiveRoundComplete", () =>
             {
@@ -296,7 +296,7 @@
                 // truncate the name (if necessary)
                 if (UsernameInput.Length > MaxUsernameLength)
                 {
-                    UsernameInput = $"{UsernameInput.Substring(0, MaxUsernameLength-3)}...";
+                    UsernameInput = $"{UsernameInput.Substring(0, MaxUsernameLength - 3)}...";
                 }
 
                 // join the game
@@ -383,7 +383,7 @@
         ClearScreen();
     }
 
-    // 
+    //
     // canvas
     //
 

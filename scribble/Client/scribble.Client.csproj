@@ -6,16 +6,12 @@
 
   <ItemGroup>
     <PackageReference Include="Blazor.Extensions.Canvas" Version="1.1.0-preview1" />
-    <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly" Version="5.0.0-rc.1.20451.17" />
-    <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly.DevServer" Version="5.0.0-rc.1.20451.17" PrivateAssets="all" />
-    <PackageReference Include="Microsoft.AspNetCore.SignalR.Client" Version="5.0.0-rc.1.20451.17" />
-    <PackageReference Include="Microsoft.Authentication.WebAssembly.Msal" Version="5.0.0-rc.1.20451.17" />
-    <PackageReference Include="Microsoft.Extensions.Http" Version="5.0.0-rc.1.20451.14" />
-    <PackageReference Include="System.Net.Http.Json" Version="5.0.0-rc.1.20451.14" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <ProjectReference Include="..\Shared\scribble.Shared.csproj" />
+    <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly" Version="5.0.0-rc.2.*" />
+    <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly.DevServer" Version="5.0.0-rc.2.*" PrivateAssets="all" />
+    <PackageReference Include="Microsoft.AspNetCore.SignalR.Client" Version="5.0.0-rc.2.*" />
+    <PackageReference Include="Microsoft.Authentication.WebAssembly.Msal" Version="5.0.0-rc.2.*" />
+    <PackageReference Include="Microsoft.Extensions.Http" Version="5.0.0-rc.2.*" />
+    <PackageReference Include="System.Net.Http.Json" Version="5.0.0-rc.2.*" />
   </ItemGroup>
 
 </Project>

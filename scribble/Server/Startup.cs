@@ -15,9 +15,6 @@ namespace scribble.Server
 {
     public class Startup
     {
-        // todo REMOVE
-        private const bool IS_AUTH = true;
-
         public Startup(IConfiguration configuration)
         {
             Configuration = configuration;
@@ -29,11 +26,10 @@ namespace scribble.Server
         // For more information on how to configure your application, visit https://go.microsoft.com/fwlink/?LinkID=398940
         public void ConfigureServices(IServiceCollection services)
         {
-            if (IS_AUTH)
-            {
+#if ENABLE_AUTHENTICATION
                 services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
                     .AddMicrosoftIdentityWebApi(Configuration.GetSection("AzureAd"));
-            }
+#endif
 
             services.AddControllersWithViews();
             services.AddRazorPages();
@@ -69,11 +65,10 @@ namespace scribble.Server
 
             app.UseRouting();
 
-            if (IS_AUTH)
-            {
-                app.UseAuthentication();
-                app.UseAuthorization();
-            }
+#if ENABLE_AUTHENTICATION
+            app.UseAuthentication();
+            app.UseAuthorization();
+#endif
 
             app.UseEndpoints(endpoints =>
             {
