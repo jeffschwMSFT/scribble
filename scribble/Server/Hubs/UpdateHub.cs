@@ -21,86 +21,115 @@ namespace scribble.Server.Hubs
 
         public override async Task OnDisconnectedAsync(Exception exception)
         {
-            GroupDetails.TryGetUsername(Context.ConnectionId, out string group, out string username);
-
-            // what if the owner drops?
-            if (!string.IsNullOrWhiteSpace(group) && GroupDetails.TryGetOwner(group, out string ownerconnectionid))
+            try
             {
-                if (string.Equals(Context.ConnectionId, ownerconnectionid, StringComparison.OrdinalIgnoreCase))
+                // get the group and username associated with this connectionid
+                GroupDetails.TryGetUsername(Context.ConnectionId, out string group, out string username);
+
+                try
                 {
-                    // ugh
-                    await SendMessage(group, "I left the game and no more rounds can be played (sorry)");
+                    // what if the owner drops?
+                    if (!string.IsNullOrWhiteSpace(group) && GroupDetails.TryGetOwner(group, out string ownerconnectionid))
+                    {
+                        if (string.Equals(Context.ConnectionId, ownerconnectionid, StringComparison.OrdinalIgnoreCase))
+                        {
+                            // ugh - we cannot proceed
+                            await SendMessage(group, "I left the game and no more rounds can be played (sorry)");
+                        }
+                        else
+                        {
+                            // notify that you left
+                            await SendMessage(group, $"I left the game");
+                        }
+                    }
+
+                    // clean up
+                    GroupDetails.Purge(Context.ConnectionId);
+
+                    // broadcast the updated group
+                    if (!string.IsNullOrWhiteSpace(group))
+                    {
+                        await Clients.Group(group).SendAsync("ReceiveJoin", string.Join(",", GroupDetails.GetUsers(group).Select(u => $"{u.Username}:{u.Score:f1}")));
+                    }
+
+                    await base.OnDisconnectedAsync(exception);
                 }
-                else
+                catch(Exception e)
                 {
-                    // notify that you left
-                    await SendMessage(group, $"I left the game");
+                    await Clients.Group(group).SendAsync("ReceiveMessage", $"failed to disconnect: {e.Message}");
                 }
             }
-
-            // clean up
-            GroupDetails.Purge(Context.ConnectionId);
-
-            // broadcast the updated group
-            if (!string.IsNullOrWhiteSpace(group))
+            catch (Exception e)
             {
-                await Clients.Group(group).SendAsync("ReceiveJoin", string.Join(",", GroupDetails.GetUsers(group).Select(u => $"{u.Username}:{u.Score:f1}")));
+                await Clients.All.SendAsync("ReceiveMessage", $"Catastrophic failure: {e.Message}");
             }
-
-            await base.OnDisconnectedAsync(exception);
         }
 
         public async Task SendStartGame(string group, string timeoutseconds, string seperator, string words)
         {
-            // set the owner
-            GroupDetails.SetOwner(group, Context.ConnectionId);
-
-            // add words
-            if (!GroupDetails.AddRoundDetails(group, words.Split(seperator), Convert.ToInt32(timeoutseconds)))
+            try
             {
-                await Clients.Group(group).SendAsync("ReceiveMessage", "failed to set game details");
-                return;
-            }
+                // set the owner
+                GroupDetails.SetOwner(group, Context.ConnectionId);
 
-            // mark that this group has already started
-            if (!GroupDetails.SetGroupStarted(group, isstarted: true))
+                // add words
+                if (!GroupDetails.AddRoundDetails(group, words.Split(seperator), Convert.ToInt32(timeoutseconds)))
+                {
+                    await Clients.Group(group).SendAsync("ReceiveMessage", "failed to set game details");
+                    return;
+                }
+
+                // mark that this group has already started
+                if (!GroupDetails.SetGroupStarted(group, isstarted: true))
+                {
+                    await Clients.Group(group).SendAsync("ReceiveMessage", $"failed to start game");
+                    return;
+                }
+
+                // notify everyone else to start game
+                await Clients.OthersInGroup(group).SendAsync("ReceiveStartGame");
+            }
+            catch (Exception e)
             {
-                await Clients.Group(group).SendAsync("ReceiveMessage", $"failed to start game");
-                return;
+                await Clients.Group(group).SendAsync("ReceiveMessage", $"failed to start game: {e.Message}");
             }
-
-            // notify everyone else to start game
-            await Clients.OthersInGroup(group).SendAsync("ReceiveStartGame");
         }
 
         public async Task SendJoin(string group, string username)
         {
-            // associate connection with group
-            await Groups.AddToGroupAsync(Context.ConnectionId, group);
-
-            // associate username with group
-            if (!GroupDetails.AddUser(group: group, connectionId: Context.ConnectionId, username))
+            try
             {
-                await Clients.Group(group).SendAsync("ReceiveMessage", $"failed to add {username}");
-                return;
+                // associate connection with group
+                await Groups.AddToGroupAsync(Context.ConnectionId, group);
+
+                // associate username with group
+                if (!GroupDetails.AddUser(group: group, connectionId: Context.ConnectionId, username))
+                {
+                    await Clients.Group(group).SendAsync("ReceiveMessage", $"failed to add {username}");
+                    return;
+                }
+
+                // broadcast current players to everyone in the group
+                await Clients.Group(group).SendAsync("ReceiveJoin", string.Join(",", GroupDetails.GetUsers(group).Select(u => $"{u.Username}:{u.Score:f1}")));
+
+                // check if a round is in flight
+                GroupDetails.TryGetInRound(group, out bool inround, out RoundDetails round);
+                if (inround && round != null)
+                {
+                    await Clients.Client(Context.ConnectionId).SendAsync("ReceiveNextRound", round.Username, round.Timeout.ToString(), round.ObfuscatedWord, false /* candraw */);
+                    return;
+                }
+
+                // make sure the player get the game start notification
+                if (GroupDetails.IsGroupStarted(group))
+                {
+                    // send the game start inidcator
+                    await Clients.Client(Context.ConnectionId).SendAsync("ReceiveStartGame");
+                }
             }
-
-            // broadcast current players to everyone in the group
-            await Clients.Group(group).SendAsync("ReceiveJoin", string.Join(",", GroupDetails.GetUsers(group).Select(u => $"{u.Username}:{u.Score:f1}")));
-
-            // check if a round is in flight
-            GroupDetails.TryGetInRound(group, out bool inround, out RoundDetails round);
-            if (inround && round != null)
+            catch (Exception e)
             {
-                await Clients.Client(Context.ConnectionId).SendAsync("ReceiveNextRound", round.Username, round.Timeout.ToString(), round.ObfuscatedWord, false /* candraw */);
-                return;
-            }
-
-            // make sure the player get the game start notification
-            if (GroupDetails.IsGroupStarted(group))
-            {
-                // send the game start inidcator
-                await Clients.Client(Context.ConnectionId).SendAsync("ReceiveStartGame");
+                await Clients.Group(group).SendAsync("ReceiveMessage", $"failed to join game: {e.Message}");
             }
         }
 
@@ -108,104 +137,139 @@ namespace scribble.Server.Hubs
         {
             if (string.IsNullOrWhiteSpace(message)) return;
 
-            // get username
-            GroupDetails.TryGetUsername(group, Context.ConnectionId, out string username);
-
-            // check if we are in a round, and if so then check if this is a valid guess
-            var completeroundearly = false;
-            GroupDetails.TryGetInRound(group, out bool inround, out RoundDetails round);
-            if (inround && round != null)
+            try
             {
-                // todo check if the word is contained in the reply
+                // get username
+                GroupDetails.TryGetUsername(group, Context.ConnectionId, out string username);
 
-                // check if this guess is currect
-                if (string.Equals(message, round.Word, StringComparison.OrdinalIgnoreCase))
+                // check if we are in a round, and if so then check if this is a valid guess
+                var completeroundearly = false;
+                GroupDetails.TryGetInRound(group, out bool inround, out RoundDetails round);
+                if (inround && round != null)
                 {
-                    // cannot guess for your own question or if you have already gotten it right
-                    if (GroupDetails.TryGetHasAnswered(group, Context.ConnectionId, out bool answered) && !answered)
+                    // todo check if the word is contained in the reply
+
+                    // check if this guess is currect
+                    if (string.Equals(message, round.Word, StringComparison.OrdinalIgnoreCase))
                     {
-                        // give credit
-                        GroupDetails.AddToScore(group, Context.ConnectionId, (float)(round.End - DateTime.UtcNow).TotalSeconds);
-                        // mark that you answered
-                        GroupDetails.SetHasAnswered(group, Context.ConnectionId);
+                        // cannot guess for your own question or if you have already gotten it right
+                        if (GroupDetails.TryGetHasAnswered(group, Context.ConnectionId, out bool answered) && !answered)
+                        {
+                            // give credit
+                            GroupDetails.AddToScore(group, Context.ConnectionId, (float)(round.End - DateTime.UtcNow).TotalSeconds);
+                            // mark that you answered
+                            GroupDetails.SetHasAnswered(group, Context.ConnectionId);
+                        }
+
+                        // return message indicating success
+                        message = "correct :)";
+
+                        // check again
+                        GroupDetails.TryGetInRound(group, out inround, out round);
+
+                        // check if the round should end early
+                        // eg. it flipped from inround to !inround
+                        completeroundearly = !inround;
                     }
+                }
 
-                    // return message indicating success
-                    message = "correct :)";
+                // send the message to everyone in this group
+                await Clients.Group(group).SendAsync("ReceiveMessage", $"{username}: {message}");
 
-                    // check again
-                    GroupDetails.TryGetInRound(group, out inround, out round);
-
-                    // check if the round should end early
-                    // eg. it flipped from inround to !inround
-                    completeroundearly = !inround;
+                // finish early if done
+                if (completeroundearly)
+                {
+                    await SendRoundComplete(group);
                 }
             }
-
-            // send the message to everyone in this group
-            await Clients.Group(group).SendAsync("ReceiveMessage", $"{username}: {message}");
-
-            // finish early if done
-            if (completeroundearly)
+            catch (Exception e)
             {
-                await SendRoundComplete(group);
+                await Clients.Group(group).SendAsync("ReceiveMessage", $"failed to send message: {e.Message}");
             }
         }
 
         public async Task SendLine(string group, string x1, string y1, string x2, string y2, string color, string diameter)
         {
-            // ensure this person is the drawer
-            GroupDetails.TryGetInRound(group, out bool inround, out RoundDetails round);
+            try
+            {
+                // ensure this person is the drawer
+                GroupDetails.TryGetInRound(group, out bool inround, out RoundDetails round);
 
-            // exit if this client is not allowed to draw across all the screens
-            if (!inround || !string.Equals(Context.ConnectionId, round.ConnectionId, StringComparison.OrdinalIgnoreCase)) return;
+                // exit if this client is not allowed to draw across all the screens
+                if (!inround || !string.Equals(Context.ConnectionId, round.ConnectionId, StringComparison.OrdinalIgnoreCase)) return;
 
-            // send the point to everyone (except the sender) in this group
-            await Clients.OthersInGroup(group).SendAsync("ReceiveLine", x1, y1, x2, y2, color, diameter);
+                // send the point to everyone (except the sender) in this group
+                await Clients.OthersInGroup(group).SendAsync("ReceiveLine", x1, y1, x2, y2, color, diameter);
+            }
+            catch (Exception e)
+            {
+                await Clients.Group(group).SendAsync("ReceiveMessage", $"failed to send line: {e.Message}");
+            }
         }
 
         public async Task SendClear(string group)
         {
-            // ensure this person is the drawer
-            GroupDetails.TryGetInRound(group, out bool inround, out RoundDetails round);
+            try
+            {
+                // ensure this person is the drawer
+                GroupDetails.TryGetInRound(group, out bool inround, out RoundDetails round);
 
-            // exit if this client is not allowed to draw across all the screens
-            if (!inround || !string.Equals(Context.ConnectionId, round.ConnectionId, StringComparison.OrdinalIgnoreCase)) return;
+                // exit if this client is not allowed to draw across all the screens
+                if (!inround || !string.Equals(Context.ConnectionId, round.ConnectionId, StringComparison.OrdinalIgnoreCase)) return;
 
-            // send clear to everyone in this group
-            await Clients.OthersInGroup(group).SendAsync("ReceiveClear");
+                // send clear to everyone in this group
+                await Clients.OthersInGroup(group).SendAsync("ReceiveClear");
+            }
+            catch (Exception e)
+            {
+                await Clients.Group(group).SendAsync("ReceiveMessage", $"failed to clear: {e.Message}");
+            }
         }
 
         public async Task SendNextRound(string group)
         {
-            // choose details about the next round
-            if (!GroupDetails.StartNextRound(group, out RoundDetails round))
+            try
             {
-                await Clients.Group(group).SendAsync("ReceiveMessage", "failed to start round");
-                return;
+                // choose details about the next round
+                if (!GroupDetails.StartNextRound(group, out RoundDetails round))
+                {
+                    await Clients.Group(group).SendAsync("ReceiveMessage", "failed to start round");
+                    return;
+                }
+
+                // give credit for the drawer
+                GroupDetails.AddToScore(group, round.ConnectionId, round.Timeout);
+                GroupDetails.SetHasAnswered(group, round.ConnectionId);
+
+                // notify everyone except the drawer
+                await Clients.GroupExcept(group, round.ConnectionId).SendAsync("ReceiveNextRound", round.Username, round.Timeout.ToString(), round.ObfuscatedWord, false /* candraw */);
+
+                // notify the drawer
+                await Clients.Client(round.ConnectionId).SendAsync("ReceiveNextRound", round.Username, round.Timeout.ToString(), round.Word, true /* candraw */);
             }
-
-            // give credit for the drawer
-            GroupDetails.AddToScore(group, round.ConnectionId, round.Timeout);
-            GroupDetails.SetHasAnswered(group, round.ConnectionId);
-
-            // notify everyone except the drawer
-            await Clients.GroupExcept(group, round.ConnectionId).SendAsync("ReceiveNextRound", round.Username, round.Timeout.ToString(), round.ObfuscatedWord, false /* candraw */);
-
-            // notify the drawer
-            await Clients.Client(round.ConnectionId).SendAsync("ReceiveNextRound", round.Username, round.Timeout.ToString(), round.Word, true /* candraw */);
+            catch (Exception e)
+            {
+                await Clients.Group(group).SendAsync("ReceiveMessage", $"failed to start next round: {e.Message}");
+            }
         }
 
         public async Task SendRoundComplete(string group)
         {
-            // stop round
-            GroupDetails.SetInRound(group, inround: false);
+            try
+            {
+                // stop round
+                GroupDetails.SetInRound(group, inround: false);
 
-            // send a round done notification
-            await Clients.Group(group).SendAsync("ReceiveRoundComplete");
+                // send a round done notification
+                await Clients.Group(group).SendAsync("ReceiveRoundComplete");
 
-            // refresh the user list (with scores)
-            await Clients.Group(group).SendAsync("ReceiveJoin", string.Join(",", GroupDetails.GetUsers(group).Select(u => $"{u.Username}:{u.Score:f1}")));
+                // refresh the user list (with scores)
+                await Clients.Group(group).SendAsync("ReceiveJoin", string.Join(",", GroupDetails.GetUsers(group).Select(u => $"{u.Username}:{u.Score:f1}")));
+            }
+            catch (Exception e)
+            {
+                await Clients.Group(group).SendAsync("ReceiveMessage", $"failed to complete round: {e.Message}");
+            }
         }
 
         #region private
@@ -227,7 +291,7 @@ namespace scribble.Server.Hubs
         class GroupDetails
         {
             // container to keep lists of users in each group
-            public static Dictionary<string /*group*/, GroupDetails> UserMap = new Dictionary<string, GroupDetails>();
+            public static Dictionary<string /*group*/, GroupDetails> GroupMap = new Dictionary<string, GroupDetails>();
 
             public GroupDetails()
             {
@@ -251,7 +315,7 @@ namespace scribble.Server.Hubs
                     Guard.EnterUpgradeableReadLock();
                     // gather dead groups and remove connection ids
                     var deadgroups = new HashSet<string>();
-                    foreach (var kvp in UserMap)
+                    foreach (var kvp in GroupMap)
                     {
                         try
                         {
@@ -284,7 +348,7 @@ namespace scribble.Server.Hubs
                         try
                         {
                             Guard.EnterWriteLock();
-                            foreach (var group in deadgroups) UserMap.Remove(group);
+                            foreach (var group in deadgroups) GroupMap.Remove(group);
                         }
                         finally
                         {
@@ -308,7 +372,7 @@ namespace scribble.Server.Hubs
                 try
                 {
                     Guard.EnterReadLock();
-                    if (!UserMap.TryGetValue(group, out details)) return false;
+                    if (!GroupMap.TryGetValue(group, out details)) return false;
                 }
                 finally
                 {
@@ -336,7 +400,7 @@ namespace scribble.Server.Hubs
                 try
                 {
                     Guard.EnterReadLock();
-                    if (!UserMap.TryGetValue(group, out details)) return false;
+                    if (!GroupMap.TryGetValue(group, out details)) return false;
                 }
                 finally
                 {
@@ -363,7 +427,7 @@ namespace scribble.Server.Hubs
                 try
                 {
                     Guard.EnterReadLock();
-                    if (!UserMap.TryGetValue(group, out details)) return false;
+                    if (!GroupMap.TryGetValue(group, out details)) return false;
                 }
                 finally
                 {
@@ -389,7 +453,7 @@ namespace scribble.Server.Hubs
                 try
                 {
                     Guard.EnterReadLock();
-                    if (!UserMap.TryGetValue(group, out details)) return false;
+                    if (!GroupMap.TryGetValue(group, out details)) return false;
                 }
                 finally
                 {
@@ -409,7 +473,7 @@ namespace scribble.Server.Hubs
                 try
                 {
                     Guard.EnterReadLock();
-                    if (!UserMap.TryGetValue(group, out details)) return false;
+                    if (!GroupMap.TryGetValue(group, out details)) return false;
                 }
                 finally
                 {
@@ -428,7 +492,7 @@ namespace scribble.Server.Hubs
                 try
                 {
                     Guard.EnterReadLock();
-                    if (!UserMap.TryGetValue(group, out details)) return false;
+                    if (!GroupMap.TryGetValue(group, out details)) return false;
                 }
                 finally
                 {
@@ -450,7 +514,7 @@ namespace scribble.Server.Hubs
                 try
                 {
                     Guard.EnterReadLock();
-                    if (!UserMap.TryGetValue(group, out details)) return false;
+                    if (!GroupMap.TryGetValue(group, out details)) return false;
                 }
                 finally
                 {
@@ -516,7 +580,7 @@ namespace scribble.Server.Hubs
                 try
                 {
                     Guard.EnterReadLock();
-                    if (!UserMap.TryGetValue(group, out details)) return false;
+                    if (!GroupMap.TryGetValue(group, out details)) return false;
                 }
                 finally
                 {
@@ -592,7 +656,7 @@ namespace scribble.Server.Hubs
                 try
                 {
                     Guard.EnterReadLock();
-                    if (!UserMap.TryGetValue(group, out details)) return false;
+                    if (!GroupMap.TryGetValue(group, out details)) return false;
                 }
                 finally
                 {
@@ -622,13 +686,13 @@ namespace scribble.Server.Hubs
                 try
                 {
                     Guard.EnterUpgradeableReadLock();
-                    if (!UserMap.TryGetValue(group, out details))
+                    if (!GroupMap.TryGetValue(group, out details))
                     {
                         details = new GroupDetails();
                         try
                         {
                             Guard.EnterWriteLock();
-                            UserMap.Add(group, details);
+                            GroupMap.Add(group, details);
                         }
                         finally
                         {
@@ -664,7 +728,7 @@ namespace scribble.Server.Hubs
                 {
                     Guard.EnterReadLock();
                     // deeper search is necessary
-                    foreach (var kvp in UserMap)
+                    foreach (var kvp in GroupMap)
                     {
                         try
                         {
@@ -699,7 +763,7 @@ namespace scribble.Server.Hubs
                 try
                 {
                     Guard.EnterReadLock();
-                    if (!UserMap.TryGetValue(group, out details)) return false;
+                    if (!GroupMap.TryGetValue(group, out details)) return false;
                 }
                 finally
                 {
@@ -730,7 +794,7 @@ namespace scribble.Server.Hubs
                 try
                 {
                     Guard.EnterReadLock();
-                    if (!UserMap.TryGetValue(group, out details)) return users;
+                    if (!GroupMap.TryGetValue(group, out details)) return users;
                 }
                 finally
                 {
@@ -758,7 +822,7 @@ namespace scribble.Server.Hubs
                 try
                 {
                     Guard.EnterReadLock();
-                    if (!UserMap.TryGetValue(group, out details)) return false;
+                    if (!GroupMap.TryGetValue(group, out details)) return false;
                 }
                 finally
                 {
@@ -778,7 +842,7 @@ namespace scribble.Server.Hubs
                 try
                 {
                     Guard.EnterReadLock();
-                    if (!UserMap.TryGetValue(group, out details)) return false;
+                    if (!GroupMap.TryGetValue(group, out details)) return false;
                 }
                 finally
                 {
@@ -821,8 +885,6 @@ namespace scribble.Server.Hubs
             }
             #endregion
         }
-
-
         #endregion
     }
 }
