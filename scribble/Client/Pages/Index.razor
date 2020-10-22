@@ -220,10 +220,10 @@
     // hub communication
     //
     Task SendMessage(string group, string message) => HubConnection?.SendAsync("SendMessage", group, message);
-    Task SendLine(double x1, double y1, double x2, double y2, string color, float diameter) => HubConnection?.SendAsync("SendLine", Group, x1.ToString(), y1.ToString(), x2.ToString(), y2.ToString(), color, diameter.ToString());
+    Task SendLine(double x1, double y1, double x2, double y2, string color, float diameter) => HubConnection?.SendAsync("SendLine", Group, x1, y1, x2, y2, color, diameter);
     Task SendClear(string group) => HubConnection?.SendAsync("SendClear", group);
     Task SendJoin(string group, string username) => HubConnection?.SendAsync("SendJoin", group, username);
-    Task SendStartGame(string group, int timeout, string seperator, string words) => HubConnection?.SendAsync("SendStartGame", group, timeout.ToString(), seperator, words);
+    Task SendStartGame(string group, int timeout, string seperator, string words) => HubConnection?.SendAsync("SendStartGame", group, timeout, seperator, words);
     Task SendNextRound(string group) => HubConnection?.SendAsync("SendNextRound", group);
     Task SendRoundComplete(string group) => HubConnection?.SendAsync("SendRoundComplete", group);
     public bool IsConnected => HubConnection?.State == HubConnectionState.Connected;
@@ -257,9 +257,9 @@
                 StateHasChanged();
             });
 
-            HubConnection.On<string, string, string, string, string, string>("ReceiveLine", (x1, y1, x2, y2, color, diameter) =>
+            HubConnection.On<double, double, double, double, string, float>("ReceiveLine", (x1, y1, x2, y2, color, diameter) =>
             {
-                DrawLine(Convert.ToDouble(x1), Convert.ToDouble(y1), Convert.ToDouble(x2), Convert.ToDouble(y2), color, Convert.ToSingle(diameter));
+                DrawLine(x1, y1, x2, y2, color, diameter);
                 StateHasChanged();
             });
 
@@ -283,7 +283,7 @@
                 StateHasChanged();
             });
 
-            HubConnection.On<string, string, string, bool>("ReceiveNextRound", (player, timeout, word, candraw) =>
+            HubConnection.On<string, int, string, bool>("ReceiveNextRound", (player, timeout, word, candraw) =>
             {
                 // check scene state
                 if (Scene == SceneType.Lobby) return;
@@ -295,7 +295,7 @@
                 PracticeDrawingMode = false;
                 HubCanDraw = candraw;
                 WordToDraw = word;
-                WordTimeout = Convert.ToInt32(timeout);
+                WordTimeout = timeout;
                 PlayerDrawing = player;
                 GameState = GameStateType.Playing;
                 CountDown = new Timer(1000);

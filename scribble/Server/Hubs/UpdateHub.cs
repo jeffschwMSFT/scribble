@@ -68,7 +68,7 @@ namespace scribble.Server.Hubs
             }
         }
 
-        public async Task SendStartGame(string group, string timeoutseconds, string seperator, string words)
+        public async Task SendStartGame(string group, int timeoutseconds, string seperator, string words)
         {
             try
             {
@@ -76,7 +76,7 @@ namespace scribble.Server.Hubs
                 GroupDetails.SetOwner(group, Context.ConnectionId);
 
                 // add words
-                if (!GroupDetails.AddRoundDetails(group, words.Split(seperator), Convert.ToInt32(timeoutseconds)))
+                if (!GroupDetails.AddRoundDetails(group, words.Split(seperator), timeoutseconds))
                 {
                     await Clients.Group(group).SendAsync("ReceiveMessage", "failed to set game details");
                     return;
@@ -192,7 +192,7 @@ namespace scribble.Server.Hubs
             }
         }
 
-        public async Task SendLine(string group, string x1, string y1, string x2, string y2, string color, string diameter)
+        public async Task SendLine(string group, double x1, double y1, double x2, double y2, string color, float diameter)
         {
             try
             {
@@ -250,10 +250,10 @@ namespace scribble.Server.Hubs
                 GroupDetails.SetHasAnswered(group, round.ConnectionId);
 
                 // notify everyone except the drawer
-                await Clients.GroupExcept(group, round.ConnectionId).SendAsync("ReceiveNextRound", round.Username, round.Timeout.ToString(), round.ObfuscatedWord, false /* candraw */);
+                await Clients.GroupExcept(group, round.ConnectionId).SendAsync("ReceiveNextRound", round.Username, round.Timeout, round.ObfuscatedWord, false /* candraw */);
 
                 // notify the drawer
-                await Clients.Client(round.ConnectionId).SendAsync("ReceiveNextRound", round.Username, round.Timeout.ToString(), round.Word, true /* candraw */);
+                await Clients.Client(round.ConnectionId).SendAsync("ReceiveNextRound", round.Username, round.Timeout, round.Word, true /* candraw */);
             }
             catch (Exception e)
             {
