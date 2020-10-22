@@ -11,28 +11,82 @@
 @inject NavigationManager NavigationManager
 @implements IDisposable
 
-<!-- todo submit on enter -->
+<!-- better timer management? -->
+
+<style>
+    #drawn {
+        border-radius: 255px 15px 255px 15px/15px 255px 15px 255px;
+        border: solid 5px hsla(67,95%,35%,1);
+        display: inline-block;
+        padding: 1em;
+        line-height: 1.5em;
+        float: left;
+    }
+
+    scrollbox {
+        border-radius: 255px 15px 255px 15px/15px 255px 15px 255px;
+        border: solid 5px hsla(67,95%,35%,1);
+        display: inline-block;
+        padding: 1em;
+        line-height: 1.5em;
+    }
+
+    button {
+        border-radius: 55px 15px 55px 15px/15px 55px 15px 55px;
+        border: solid 5px hsla(67,95%,35%,1);
+        display: inline-block;
+        background-color: lightgrey;
+    }
+
+    input {
+        border-radius: 255px 15px 255px 15px/15px 255px 15px 255px;
+        border: solid 5px hsla(67,95%,35%,1);
+        display: inline-block;
+    }
+
+    select {
+        border-radius: 255px 15px 255px 15px/15px 255px 15px 255px;
+        border: solid 5px hsla(67,95%,35%,1);
+        display: inline-block;
+    }
+
+    textarea {
+        border-radius: 255px 15px 255px 15px/15px 255px 15px 255px;
+        border: solid 5px hsla(67,95%,35%,1);
+        display: inline-block;
+    }
+</style>
+
+<!-- submit on enter: https://github.com/dotnet/aspnetcore/issues/15635#issuecomment-546675431 -->
 
 <div class="page" style="height: 100%; width: 100%;">
-    <div class="main" name="mainPanel" hidden="@(Scene != SceneType.Main)">
-        <button @onclick="GotoNextScene">Create game</button> <br />
-        Words to choose from:<br />
+    <h1 hidden="@(Scene != SceneType.Main && Scene != SceneType.Lobby)">Welcome to Scribble!</h1>
+    <div class="main" id="drawn" name="newgamePanel" hidden="@(Scene != SceneType.Main)">
+        <h2>Create a new Game</h2>
+        Choose words to draw:<br />
         <textarea @bind="WordInput" rows="10" /><br />
-        Turn timer <input @bind="TimeoutInput" type="number" min=30 max=1024 /><br />
-        <br />
-        Join Game (tbd)
+        <p style="font-size:9px">Newline seperated list of words</p>
+        Turn timer <input @bind="TimeoutInput" type="number" size="4" /><br />
+        <button @onclick="GotoNextScene">Create game</button>
     </div>
 
-    <div class="main" name="picknamePanel" hidden="@(Scene != SceneType.Lobby)">
-        <input @bind="UsernameInput" size="50" /><br />
+    <div class="main" id="drawn" name="joinPanel" hidden="@(Scene != SceneType.Main)">
+        <h2>Join a Game</h2>
+        <input @bind-value="JoinGameIdInput" @bind-value:event="oninput" @onkeyup="e => KeyUpNextScene(e)" />
+        <button @onclick="GotoNextScene">Join game</button>
+    </div>
+
+    <div class="main" id="drawn" name="picknamePanel" hidden="@(Scene != SceneType.Lobby)">
+        User name: <input @bind-value="UsernameInput" @bind-value:event="oninput" @onkeyup="e => KeyUpNextScene(e)" size="35" /><br />
         <p style="font-size:9px">Usernames with ',' (coma), ':' (colon), or '&lt;' (lt) are not allowed</p>
         <button type="submit" @onclick="GotoNextScene">Join Game</button>
     </div>
 
-    <div style="float: left; width: 300px; height: 100%; border: double;" name="joinPanel" hidden="@(Scene != SceneType.Play)">
+    <div name="joinPanel" id="drawn" hidden="@(Scene != SceneType.Play)">
+        <!-- style="float: left; width: 300px; height: 100%; border: double;" -->
         Hello @(UsernameInput)<br />
         <div id="scrollbox" style="height: 600px;overflow: scroll;">
-            <table border="1" cellpadding="5">
+            <table border="1" id="drawn" cellpadding="5">
                 <tr><th>Player</th><th>Score</th></tr>
                 @foreach (var user in Users)
                 {
@@ -47,13 +101,15 @@
         </div>
         <p hidden="@(Scene != SceneType.Play || !IsOwner)">Select 'Draw' to choose the next player to draw</p>
         <button @onclick="StartNextRound" hidden="@(Scene != SceneType.Play || !IsOwner || GameState != GameStateType.Waiting)">Draw</button>
+        <button @onclick="EndRoundEarly" hidden="@(Scene != SceneType.Play || !IsOwner || GameState != GameStateType.Playing)">End Round</button>
     </div>
 
-    <div style="float: left; border: double; height: 100%" name="gamePanel" hidden="@(Scene != SceneType.Play)">
+    <div name="gamePanel" id="drawn" hidden="@(Scene != SceneType.Play)">
+        <!-- style="float: left; border: double; height: 100%"  -->
         <h1><label>@(string.IsNullOrWhiteSpace(WordToDraw) ? "" : $"{WordToDraw}")</label></h1>
         <h2><label>@(string.IsNullOrWhiteSpace(PlayerDrawing) ? "" : $"by {PlayerDrawing} in {WordTimeout} seconds")</label></h2>
 
-        <div id="canvas" style="border: double" tabindex="0" @onmouseup="e => MouseUp(e)" @onmousedown="e => MouseDown(e)" @onmousemove="e => MouseMove(e)" @ontouchstart="e => TouchDown(e)" @ontouchend="e => TouchUp(e)" @ontouchmove="e => TouchMove(e)">
+        <div id="canvas" style="border: double" tabindex="0" @onmouseup="e => MouseUp(e)" @onmousedown="e => MouseDown(e)" @onmousemove="e => MouseMove(e)" @ontouchstart="e => TouchDown(e)" @ontouchend="e => TouchUp(e)" @ontouchmove="e => TouchMove(e)" @ontouchmove:preventDefault @ontouchmove:stopPropagation>
             <BECanvas Width="@Width" Height="@Height" @ref="CanvasReference"></BECanvas>
         </div>
 
@@ -88,7 +144,7 @@
             }
             <hr />
         </div>
-        <input @bind="MessageInput" size="50" />
+        <input size="50" @bind-value="MessageInput" @bind-value:event="oninput" @onkeyup="e => KeyUpSendMessage(e)"  />
         <button @onclick="SendMessage">Send</button>
     </div>
 </div>
@@ -112,6 +168,7 @@
     private string WordInput;
     private int TimeoutInput = 60;
     private List<string> Users = new List<string>();
+    private string JoinGameIdInput;
 
     // game play
     private bool HubCanDraw = false; // controled via Hub
@@ -129,6 +186,18 @@
     private BECanvasComponent CanvasReference;
 
     private bool IsOwner { get { return !string.IsNullOrWhiteSpace(WordInput); } }
+
+    public class BoundingClientRect
+    {
+        public double X { get; set; }
+        public double Y { get; set; }
+        public double Width { get; set; }
+        public double Height { get; set; }
+        public double Top { get; set; }
+        public double Right { get; set; }
+        public double Bottom { get; set; }
+        public double Left { get; set; }
+    }
 
     //
     // Scene state machine
@@ -215,7 +284,7 @@
             });
 
             HubConnection.On<string, string, string, bool>("ReceiveNextRound", (player, timeout, word, candraw) =>
-               {
+            {
                 // check scene state
                 if (Scene == SceneType.Lobby) return;
 
@@ -224,28 +293,28 @@
 
                 // setup the details
                 PracticeDrawingMode = false;
-                   HubCanDraw = candraw;
-                   WordToDraw = word;
-                   WordTimeout = Convert.ToInt32(timeout);
-                   PlayerDrawing = player;
-                   GameState = GameStateType.Playing;
-                   CountDown = new Timer(1000);
-                   CountDown.Elapsed += async (sender, e) =>
-                   {
-                       if (WordTimeout > 0) WordTimeout--;
-                       else
-                       {
-                           if (HubCanDraw || IsOwner) await SendRoundComplete(Group);
-                           CountDown.Stop();
-                       }
-                       // refresh
-                       StateHasChanged();
-                   };
-                   CountDown.Start();
+                HubCanDraw = candraw;
+                WordToDraw = word;
+                WordTimeout = Convert.ToInt32(timeout);
+                PlayerDrawing = player;
+                GameState = GameStateType.Playing;
+                CountDown = new Timer(1000);
+                CountDown.Elapsed += async (sender, e) =>
+                {
+                    if (WordTimeout > 0) WordTimeout--;
+                    else
+                    {
+                        if (HubCanDraw || IsOwner) await SendRoundComplete(Group);
+                        CountDown.Stop();
+                    }
+                    // refresh
+                    StateHasChanged();
+                };
+                CountDown.Start();
 
                 // refesh
                 StateHasChanged();
-               });
+            });
 
             HubConnection.On("ReceiveRoundComplete", () =>
             {
@@ -321,7 +390,15 @@
 
     private async void GotoNextScene()
     {
-        if (string.IsNullOrWhiteSpace(Group))
+        if (!string.IsNullOrWhiteSpace(JoinGameIdInput))
+        {
+            // join an existing game
+            Group = JoinGameIdInput;
+
+            // update the url so that it is easy to cut and paste
+            NavigationManager.NavigateTo($"/?{Group}");
+        }
+        else if (string.IsNullOrWhiteSpace(Group))
         {
             if (string.IsNullOrWhiteSpace(WordInput) || WordInput.IndexOf('<') >= 0)
             {
@@ -353,9 +430,21 @@
         await ChangeSceneState();
     }
 
+    private bool KeyUpNextScene(KeyboardEventArgs e)
+    {
+        if (e.Code == "Enter") GotoNextScene();
+        return true;
+    }
+
     //
     // game play
     //
+    private bool KeyUpSendMessage(KeyboardEventArgs e)
+    {
+        if (e.Code == "Enter") SendMessage();
+        return true;
+    }
+
     private async void SendMessage()
     {
         if (Scene != SceneType.Play) return;
@@ -368,6 +457,11 @@
     private async void StartNextRound()
     {
         await SendNextRound(Group);
+    }
+
+    private async void EndRoundEarly()
+    {
+        await SendRoundComplete(Group);
     }
 
     private async void HandleClearScreen()
@@ -389,13 +483,15 @@
 
     // todo touch
 
-    protected void TouchUp(TouchEventArgs e)
+    protected bool TouchUp(TouchEventArgs e)
     {
         HandleUp();
+        return true;
     }
-    protected void MouseUp(MouseEventArgs e)
+    protected bool MouseUp(MouseEventArgs e)
     {
         HandleUp();
+        return true;
     }
     protected void HandleUp()
     {
@@ -411,14 +507,20 @@
         DrawingPenIsDown = false;
     }
 
-    protected void TouchDown(TouchEventArgs e)
+    protected async Task<bool> TouchDown(TouchEventArgs e)
     {
-        if (e.Touches == null || e.Touches.Length == 0) return;
-        HandleDown(e.Touches[0].ScreenX, e.Touches[0].ScreenY);
+        if (e.Touches == null || e.Touches.Length == 0) return false;
+        var rec = await JSRuntime.InvokeAsync<BoundingClientRect>("DOMGetBoundingClientRect", "canvas");
+        var offsetx = e.Touches[0].ClientX - rec.Left;
+        var offsety = e.Touches[0].ClientY - rec.Top;
+        Console.WriteLine($"offset {offsetx},{offsety} client {e.Touches[0].ClientX},{e.Touches[0].ClientY} page {e.Touches[0].PageX},{e.Touches[0].PageY} screen {e.Touches[0].ScreenX},{e.Touches[0].ScreenY}");
+        HandleDown(offsetx, offsety);
+        return true;
     }
-    protected void MouseDown(MouseEventArgs e)
+    protected bool MouseDown(MouseEventArgs e)
     {
         HandleDown(e.OffsetX, e.OffsetY);
+        return true;
     }
     protected void HandleDown(double x, double y)
     {
@@ -435,14 +537,19 @@
         DrawingPenIsDown = true;
     }
 
-    protected void TouchMove(TouchEventArgs e)
+    protected async Task<bool> TouchMove(TouchEventArgs e)
     {
-        if (e.Touches == null || e.Touches.Length == 0) return;
-        HandleMove(e.Touches[0].ScreenX, e.Touches[0].ScreenY);
+        if (e.Touches == null || e.Touches.Length == 0) return false;
+        var rec = await JSRuntime.InvokeAsync<BoundingClientRect>("DOMGetBoundingClientRect", "canvas");
+        var offsetx = e.Touches[0].ClientX - rec.Left;
+        var offsety = e.Touches[0].ClientY - rec.Top;
+        HandleMove(offsetx, offsety);
+        return true;
     }
-    protected void MouseMove(MouseEventArgs e)
+    protected bool MouseMove(MouseEventArgs e)
     {
         HandleMove(e.OffsetX, e.OffsetY);
+        return true;
     }
     protected async void HandleMove(double x, double y)
     {

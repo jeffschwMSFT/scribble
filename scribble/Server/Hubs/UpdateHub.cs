@@ -9,6 +9,9 @@ using System.Linq.Expressions;
 using Microsoft.Graph;
 using System.Threading;
 
+// todo move receive methods to a model
+// fix the exchange types
+
 namespace scribble.Server.Hubs
 {
     public class UpdateHub : Hub
@@ -49,7 +52,7 @@ namespace scribble.Server.Hubs
                     // broadcast the updated group
                     if (!string.IsNullOrWhiteSpace(group))
                     {
-                        await Clients.Group(group).SendAsync("ReceiveJoin", string.Join(",", GroupDetails.GetUsers(group).Select(u => $"{u.Username}:{u.Score:f1}")));
+                        await Clients.Group(group).SendAsync("ReceiveJoin", GetSortedUsers(GroupDetails.GetUsers(group)));
                     }
 
                     await base.OnDisconnectedAsync(exception);
@@ -99,9 +102,6 @@ namespace scribble.Server.Hubs
         {
             try
             {
-                // associate connection with group
-                await Groups.AddToGroupAsync(Context.ConnectionId, group);
-
                 // associate username with group
                 if (!GroupDetails.AddUser(group: group, connectionId: Context.ConnectionId, username))
                 {
@@ -109,8 +109,11 @@ namespace scribble.Server.Hubs
                     return;
                 }
 
+                // associate connection with group
+                await Groups.AddToGroupAsync(Context.ConnectionId, group);
+
                 // broadcast current players to everyone in the group
-                await Clients.Group(group).SendAsync("ReceiveJoin", string.Join(",", GroupDetails.GetUsers(group).Select(u => $"{u.Username}:{u.Score:f1}")));
+                await Clients.Group(group).SendAsync("ReceiveJoin", GetSortedUsers(GroupDetails.GetUsers(group)));
 
                 // check if a round is in flight
                 GroupDetails.TryGetInRound(group, out bool inround, out RoundDetails round);
@@ -137,20 +140,21 @@ namespace scribble.Server.Hubs
         {
             if (string.IsNullOrWhiteSpace(message)) return;
 
+            // todo there is a corner case with only 1 player where the end will not end by answering the right answer
+            // the reason is that the round is over but the detection logic does not catch that
+
             try
             {
                 // get username
                 GroupDetails.TryGetUsername(group, Context.ConnectionId, out string username);
 
                 // check if we are in a round, and if so then check if this is a valid guess
-                var completeroundearly = false;
                 GroupDetails.TryGetInRound(group, out bool inround, out RoundDetails round);
+                var completeroundearly = false;
                 if (inround && round != null)
                 {
-                    // todo check if the word is contained in the reply
-
                     // check if this guess is currect
-                    if (string.Equals(message, round.Word, StringComparison.OrdinalIgnoreCase))
+                    if (message.IndexOf(round.Word, StringComparison.OrdinalIgnoreCase) >= 0)
                     {
                         // cannot guess for your own question or if you have already gotten it right
                         if (GroupDetails.TryGetHasAnswered(group, Context.ConnectionId, out bool answered) && !answered)
@@ -161,8 +165,8 @@ namespace scribble.Server.Hubs
                             GroupDetails.SetHasAnswered(group, Context.ConnectionId);
                         }
 
-                        // return message indicating success
-                        message = "correct :)";
+                        // remove the correct word from the phrase
+                        message = message.Replace(round.Word, "correct :)", StringComparison.OrdinalIgnoreCase);
 
                         // check again
                         GroupDetails.TryGetInRound(group, out inround, out round);
@@ -230,6 +234,10 @@ namespace scribble.Server.Hubs
         {
             try
             {
+                // check that this is initiated by the owner
+                if (!GroupDetails.TryGetOwner(group, out string ownerconnectionid) || 
+                    !string.Equals(Context.ConnectionId, ownerconnectionid, StringComparison.OrdinalIgnoreCase)) return;
+
                 // choose details about the next round
                 if (!GroupDetails.StartNextRound(group, out RoundDetails round))
                 {
@@ -257,6 +265,8 @@ namespace scribble.Server.Hubs
         {
             try
             {
+                // this method is callable by any connection
+
                 // stop round
                 GroupDetails.SetInRound(group, inround: false);
 
@@ -264,7 +274,7 @@ namespace scribble.Server.Hubs
                 await Clients.Group(group).SendAsync("ReceiveRoundComplete");
 
                 // refresh the user list (with scores)
-                await Clients.Group(group).SendAsync("ReceiveJoin", string.Join(",", GroupDetails.GetUsers(group).Select(u => $"{u.Username}:{u.Score:f1}")));
+                await Clients.Group(group).SendAsync("ReceiveJoin", GetSortedUsers(GroupDetails.GetUsers(group)));
             }
             catch (Exception e)
             {
@@ -666,7 +676,10 @@ namespace scribble.Server.Hubs
                 {
                     details.InstanceGuard.EnterWriteLock();
                     if (details.Words.Count > 0) details.Words.Clear();
-                    details.Words.AddRange(words);
+                    for (int i = 0; i < words.Length; i++)
+                    {
+                        if (!string.IsNullOrWhiteSpace(words[i])) details.Words.Add(words[i]);
+                    }
                     details.TimeoutSeconds = timeoutseconds;
                     details.NextWordIndex = 0;
                 }
@@ -884,6 +897,11 @@ namespace scribble.Server.Hubs
                 return sb.ToString();
             }
             #endregion
+        }
+
+        private string GetSortedUsers(List<UserDetails> users)
+        {
+            return string.Join(",", users.OrderByDescending(u => u.Score).Select(u => $"{u.Username}:{u.Score:f1}"));
         }
         #endregion
     }
