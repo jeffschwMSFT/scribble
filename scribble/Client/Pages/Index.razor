@@ -316,9 +316,11 @@
                 StateHasChanged();
             });
 
-            HubConnection.On("ReceiveRoundComplete", () =>
+            HubConnection.On<string>("ReceiveRoundComplete", (word) =>
             {
                 HubCanDraw = false;
+                WordToDraw = word;
+                WordTimeout = 0;
                 CountDown.Stop();
                 GameState = GameStateType.Waiting;
                 Messages.Add("**** round complete ****");

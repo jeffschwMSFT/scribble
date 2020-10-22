@@ -10,7 +10,6 @@ using Microsoft.Graph;
 using System.Threading;
 
 // todo move receive methods to a model
-// fix the exchange types
 
 namespace scribble.Server.Hubs
 {
@@ -116,10 +115,10 @@ namespace scribble.Server.Hubs
                 await Clients.Group(group).SendAsync("ReceiveJoin", GetSortedUsers(GroupDetails.GetUsers(group)));
 
                 // check if a round is in flight
-                GroupDetails.TryGetInRound(group, out bool inround, out RoundDetails round);
-                if (inround && round != null)
+                GroupDetails.TryGetInRound(group, out bool inround, out bool atendofround, out RoundDetails round);
+                if (inround && !atendofround && round != null)
                 {
-                    await Clients.Client(Context.ConnectionId).SendAsync("ReceiveNextRound", round.Username, round.Timeout.ToString(), round.ObfuscatedWord, false /* candraw */);
+                    await Clients.Client(Context.ConnectionId).SendAsync("ReceiveNextRound", round.Username, round.Timeout, round.ObfuscatedWord, false /* candraw */);
                     return;
                 }
 
@@ -149,31 +148,29 @@ namespace scribble.Server.Hubs
                 GroupDetails.TryGetUsername(group, Context.ConnectionId, out string username);
 
                 // check if we are in a round, and if so then check if this is a valid guess
-                GroupDetails.TryGetInRound(group, out bool inround, out RoundDetails round);
-                var completeroundearly = false;
+                GroupDetails.TryGetInRound(group, out bool inround, out bool atendofround, out RoundDetails round);
                 if (inround && round != null)
                 {
                     // check if this guess is currect
                     if (message.IndexOf(round.Word, StringComparison.OrdinalIgnoreCase) >= 0)
                     {
                         // cannot guess for your own question or if you have already gotten it right
-                        if (GroupDetails.TryGetHasAnswered(group, Context.ConnectionId, out bool answered) && !answered)
+                        if (!atendofround)
                         {
-                            // give credit
-                            GroupDetails.AddToScore(group, Context.ConnectionId, (float)(round.End - DateTime.UtcNow).TotalSeconds);
-                            // mark that you answered
-                            GroupDetails.SetHasAnswered(group, Context.ConnectionId);
+                            if (GroupDetails.TryGetHasAnswered(group, Context.ConnectionId, out bool answered) && !answered)
+                            {
+                                // give credit
+                                GroupDetails.AddToScore(group, Context.ConnectionId, (float)(round.End - DateTime.UtcNow).TotalSeconds);
+                                // mark that you answered
+                                GroupDetails.SetHasAnswered(group, Context.ConnectionId);
+                            }
+
+                            // check again
+                            GroupDetails.TryGetInRound(group, out inround, out atendofround, out round);
                         }
 
                         // remove the correct word from the phrase
                         message = message.Replace(round.Word, "correct :)", StringComparison.OrdinalIgnoreCase);
-
-                        // check again
-                        GroupDetails.TryGetInRound(group, out inround, out round);
-
-                        // check if the round should end early
-                        // eg. it flipped from inround to !inround
-                        completeroundearly = !inround;
                     }
                 }
 
@@ -181,7 +178,7 @@ namespace scribble.Server.Hubs
                 await Clients.Group(group).SendAsync("ReceiveMessage", $"{username}: {message}");
 
                 // finish early if done
-                if (completeroundearly)
+                if (atendofround)
                 {
                     await SendRoundComplete(group);
                 }
@@ -197,10 +194,10 @@ namespace scribble.Server.Hubs
             try
             {
                 // ensure this person is the drawer
-                GroupDetails.TryGetInRound(group, out bool inround, out RoundDetails round);
+                GroupDetails.TryGetInRound(group, out bool inround, out bool atendofround, out RoundDetails round);
 
                 // exit if this client is not allowed to draw across all the screens
-                if (!inround || !string.Equals(Context.ConnectionId, round.ConnectionId, StringComparison.OrdinalIgnoreCase)) return;
+                if (!inround || atendofround || !string.Equals(Context.ConnectionId, round.ConnectionId, StringComparison.OrdinalIgnoreCase)) return;
 
                 // send the point to everyone (except the sender) in this group
                 await Clients.OthersInGroup(group).SendAsync("ReceiveLine", x1, y1, x2, y2, color, diameter);
@@ -216,10 +213,10 @@ namespace scribble.Server.Hubs
             try
             {
                 // ensure this person is the drawer
-                GroupDetails.TryGetInRound(group, out bool inround, out RoundDetails round);
+                GroupDetails.TryGetInRound(group, out bool inround, out bool atendofround, out RoundDetails round);
 
                 // exit if this client is not allowed to draw across all the screens
-                if (!inround || !string.Equals(Context.ConnectionId, round.ConnectionId, StringComparison.OrdinalIgnoreCase)) return;
+                if (!inround || atendofround || !string.Equals(Context.ConnectionId, round.ConnectionId, StringComparison.OrdinalIgnoreCase)) return;
 
                 // send clear to everyone in this group
                 await Clients.OthersInGroup(group).SendAsync("ReceiveClear");
@@ -266,12 +263,13 @@ namespace scribble.Server.Hubs
             try
             {
                 // this method is callable by any connection
+                GroupDetails.TryGetInRound(group, out bool inround, out bool atendofround, out RoundDetails round);
 
                 // stop round
                 GroupDetails.SetInRound(group, inround: false);
 
                 // send a round done notification
-                await Clients.Group(group).SendAsync("ReceiveRoundComplete");
+                await Clients.Group(group).SendAsync("ReceiveRoundComplete", round != null ? round.Word : "");
 
                 // refresh the user list (with scores)
                 await Clients.Group(group).SendAsync("ReceiveJoin", GetSortedUsers(GroupDetails.GetUsers(group)));
@@ -514,10 +512,11 @@ namespace scribble.Server.Hubs
                 return true;
             }
 
-            public static bool TryGetInRound(string group, out bool inround, out RoundDetails round)
+            public static bool TryGetInRound(string group, out bool inround, out bool atendofround, out RoundDetails round)
             {
                 round = null;
                 inround = false;
+                atendofround = false;
                 if (string.IsNullOrWhiteSpace(group)) return false;
 
                 GroupDetails details = null;
@@ -532,45 +531,37 @@ namespace scribble.Server.Hubs
                 }
 
                 // first exit early if not in a round
-                if (!details.InRound)
-                {
-                    inround = false;
-                    return true;
-                }
+                if (!details.InRound) return true;
 
                 try
                 {
                     details.InstanceGuard.EnterReadLock();
 
+                    // we are currently in a round
+                    inround = true;
+                    round = details.Current;
+                    atendofround = false;
+
                     // second check if we are within the time limit of this round
                     if (DateTime.UtcNow < details.Current.Start || DateTime.UtcNow > details.Current.End)
                     {
-                        inround = false;
+                        // we are outside of the timeout - we are at the end of the round
+                        atendofround = true;
                         return true;
                     }
 
                     // third do a quick check if the number of players is not the same as answered
-                    if (details.Connections.Count != details.HasAnswered.Count)
-                    {
-                        round = details.Current;
-                        inround = true;
-                        return true;
-                    }
+                    if (details.Connections.Count != details.HasAnswered.Count) return true;
 
                     // fourth check that all the connections are present in answered
                     foreach (var conn in details.Connections.Keys)
                     {
-                        if (!details.HasAnswered.Contains(conn))
-                        {
-                            // this player has not answered yet
-                            round = details.Current;
-                            inround = true;
-                            return true;
-                        }
+                        // this player has not answered yet
+                        if (!details.HasAnswered.Contains(conn)) return true;
                     }
 
-                    // everyone has answered
-                    inround = false;
+                    // everyone has answered - we are now at the end of the round
+                    atendofround = true;
                     return true;
                 }
                 finally
@@ -678,7 +669,7 @@ namespace scribble.Server.Hubs
                     if (details.Words.Count > 0) details.Words.Clear();
                     for (int i = 0; i < words.Length; i++)
                     {
-                        if (!string.IsNullOrWhiteSpace(words[i])) details.Words.Add(words[i]);
+                        if (!string.IsNullOrWhiteSpace(words[i])) details.Words.Add(words[i].Trim());
                     }
                     details.TimeoutSeconds = timeoutseconds;
                     details.NextWordIndex = 0;
