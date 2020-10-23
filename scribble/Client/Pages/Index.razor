@@ -130,7 +130,7 @@
             <input type="button" style="background: #000000; border: dashed;" size="4" @onclick='e => ChangeColor(e,"rgba(0,0,0,1.0)")' />
             <input type="button" style="background: #ffffff; border: dashed;" size="4" @onclick='e => ChangeColor(e,"rgba(255,255,255,1.0)")' />
             <input type="color" style="border: dashed;" @bind-value="ColorInput" @bind-value:event="oninput" @onchange="ColorOnChange" vaue="#FF0000" />
-            <input type="range" style="border: hidden;" class="slider" min=5 max=40 @bind="DiameterInput" step="1"/>
+            <input type="range" style="border: hidden;" class="slider" min=1 max=40 @bind="DiameterInput" step="1"/>
             <button @onclick="HandleClearScreen">Clear</button>
             <br />
         </div>
@@ -155,7 +155,7 @@
     private HubConnection HubConnection;
     private List<string> Messages = new List<string>();
     private string MessageInput;
-    private int DiameterInput = 0;
+    private int DiameterInput = 5;
     private const int Width = 500;
     private const int Height = 300;
     private const int MaxUsernameLength = 20;
