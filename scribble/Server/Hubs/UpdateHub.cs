@@ -12,7 +12,6 @@ using System.Threading;
 // todo move receive methods to a model
 // todo better perf in sendline
 // todo purge after X time (to clean up the old entries)
-// same player over and over
 
 namespace scribble.Server.Hubs
 {
@@ -316,6 +315,7 @@ namespace scribble.Server.Hubs
                 NextWordIndex = 0;
                 HasDrawn = new HashSet<string>();
                 InstanceGuard = new ReaderWriterLockSlim();
+                LastRoundUtc = DateTime.UtcNow;
             }
 
             public static string Purge(string connectionId)
@@ -345,6 +345,7 @@ namespace scribble.Server.Hubs
                                 // capture the group
                                 connectionsGroup = kvp.Key;
                             }
+                            // if this is the last connection, remove the entry
                             if (kvp.Value.Connections.Count == 0) deadgroups.Add(kvp.Key);
                         }
                         finally
@@ -620,6 +621,8 @@ namespace scribble.Server.Hubs
                         var index = rand.Next() % details.Connections.Keys.Count;
                         details.Current.ConnectionId = details.Connections.Keys.ToArray()[index];
                     }
+                    // add user to hasdrawn
+                    details.HasDrawn.Add(details.Current.ConnectionId);
                     // set the details
                     if (!details.Connections.TryGetValue(details.Current.ConnectionId, out UserDetails user)) throw new Exception("Failed to get something that clearly is present");
                     details.Current.Username = user.Username;
@@ -637,6 +640,9 @@ namespace scribble.Server.Hubs
                     // set valid time zones
                     details.Current.Start = DateTime.UtcNow;
                     details.Current.End = details.Current.Start.AddSeconds(details.Current.Timeout);
+
+                    // update the last round marker (used for purging old games)
+                    details.LastRoundUtc = DateTime.UtcNow;
 
                     // mark that we are in a round
                     details.InRound = true;
@@ -877,6 +883,7 @@ namespace scribble.Server.Hubs
             private string OwnerConnectionId;
             private HashSet<string> HasAnswered;
             private HashSet<string> HasDrawn;
+            private DateTime LastRoundUtc;
 
             private static string Obfuscate(string word)
             {

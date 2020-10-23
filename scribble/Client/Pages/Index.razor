@@ -12,7 +12,6 @@
 @implements IDisposable
 
 <!-- better timer management? -->
-<!-- auto scroll list -->
 <!-- undue (go back)/ eraser -->
 
 <style>
@@ -135,11 +134,11 @@
             <button @onclick="HandleClearScreen">Clear</button>
             <br />
         </div>
-        <div id="scrollbox" style="height: 300px;overflow: scroll;">
-            @foreach (var item in Messages)
+        <div id="scrollbox" style="height: 300px;overflow: scroll;display: flex;flex-direction: column-reverse;">
+            @for(int i=Messages.Count-1; i>=0; i--)
             {
                 <div>
-                    <div class="msg">@item</div>
+                    <div class="msg">@Messages[i]</div>
                 </div>
             }
             <hr />
@@ -254,7 +253,10 @@
 
             HubConnection.On<string>("ReceiveMessage", (message) =>
             {
+                // add
                 Messages.Add($"{message}");
+                // trim to keep a reasonable amount
+                if (Messages.Count > 250) Messages.RemoveRange(0, 50);
                 StateHasChanged();
             });
 
