@@ -12,6 +12,8 @@
 @implements IDisposable
 
 <!-- better timer management? -->
+<!-- auto scroll list -->
+<!-- undue (go back)/ eraser -->
 
 <style>
     #drawn {
@@ -83,7 +85,6 @@
     </div>
 
     <div name="joinPanel" id="drawn" hidden="@(Scene != SceneType.Play)">
-        <!-- style="float: left; width: 300px; height: 100%; border: double;" -->
         Hello @(UsernameInput)<br />
         <div id="scrollbox" style="height: 600px;overflow: scroll;">
             <table border="1" id="drawn" cellpadding="5">
@@ -105,9 +106,8 @@
     </div>
 
     <div name="gamePanel" id="drawn" hidden="@(Scene != SceneType.Play)">
-        <!-- style="float: left; border: double; height: 100%"  -->
-        <h1><label>@(string.IsNullOrWhiteSpace(WordToDraw) ? "" : $"{WordToDraw}")</label></h1>
-        <h2><label>@(string.IsNullOrWhiteSpace(PlayerDrawing) ? "" : $"by {PlayerDrawing} in {WordTimeout} seconds")</label></h2>
+        <pre style="font-size: 20px;">@(string.IsNullOrWhiteSpace(WordToDraw) ? "" : $"{WordToDraw}")</pre>
+        <pre style="font-size: 16px;">@(string.IsNullOrWhiteSpace(PlayerDrawing) ? "" : $"by {PlayerDrawing} in {WordTimeout} seconds")</pre>
 
         <div id="canvas" style="border: double" tabindex="0" @onmouseup="e => MouseUp(e)" @onmousedown="e => MouseDown(e)" @onmousemove="e => MouseMove(e)" @ontouchstart="e => TouchDown(e)" @ontouchend="e => TouchUp(e)" @ontouchmove="e => TouchMove(e)" @ontouchmove:preventDefault @ontouchmove:stopPropagation>
             <BECanvas Width="@Width" Height="@Height" @ref="CanvasReference"></BECanvas>
@@ -144,7 +144,7 @@
             }
             <hr />
         </div>
-        <input size="50" @bind-value="MessageInput" @bind-value:event="oninput" @onkeyup="e => KeyUpSendMessage(e)"  />
+        <input size="50" @bind-value="MessageInput" @bind-value:event="oninput" @onkeyup="e => KeyUpSendMessage(e)" />
         <button @onclick="SendMessage">Send</button>
     </div>
 </div>
@@ -184,6 +184,7 @@
     private bool DrawingPenIsDown = false;
     private Canvas2DContext Context;
     private BECanvasComponent CanvasReference;
+    private BoundingClientRect CanvasRect = null;
 
     private bool IsOwner { get { return !string.IsNullOrWhiteSpace(WordInput); } }
 
@@ -278,21 +279,21 @@
 
             HubConnection.On("ReceiveStartGame", () =>
             {
-                // start the game
-                Scene = SceneType.Play;
+            // start the game
+            Scene = SceneType.Play;
                 StateHasChanged();
             });
 
             HubConnection.On<string, int, string, bool>("ReceiveNextRound", (player, timeout, word, candraw) =>
             {
-                // check scene state
-                if (Scene == SceneType.Lobby) return;
+            // check scene state
+            if (Scene == SceneType.Lobby) return;
 
-                // clear the screen
-                ClearScreen();
+            // clear the screen
+            ClearScreen();
 
-                // setup the details
-                PracticeDrawingMode = false;
+            // setup the details
+            PracticeDrawingMode = false;
                 HubCanDraw = candraw;
                 WordToDraw = word;
                 WordTimeout = timeout;
@@ -307,13 +308,13 @@
                         if (HubCanDraw || IsOwner) await SendRoundComplete(Group);
                         CountDown.Stop();
                     }
-                    // refresh
-                    StateHasChanged();
+                // refresh
+                StateHasChanged();
                 };
                 CountDown.Start();
 
-                // refesh
-                StateHasChanged();
+            // refesh
+            StateHasChanged();
             });
 
             HubConnection.On<string>("ReceiveRoundComplete", (word) =>
@@ -477,6 +478,8 @@
             await SendClear(Group);
         }
         ClearScreen();
+        // let go of the pen
+        DrawingPenIsDown = false;
     }
 
     //
@@ -512,10 +515,15 @@
     protected async Task<bool> TouchDown(TouchEventArgs e)
     {
         if (e.Touches == null || e.Touches.Length == 0) return false;
-        var rec = await JSRuntime.InvokeAsync<BoundingClientRect>("DOMGetBoundingClientRect", "canvas");
-        var offsetx = e.Touches[0].ClientX - rec.Left;
-        var offsety = e.Touches[0].ClientY - rec.Top;
-        Console.WriteLine($"offset {offsetx},{offsety} client {e.Touches[0].ClientX},{e.Touches[0].ClientY} page {e.Touches[0].PageX},{e.Touches[0].PageY} screen {e.Touches[0].ScreenX},{e.Touches[0].ScreenY}");
+
+        // get the canvas bounding rect
+        CanvasRect = await JSRuntime.InvokeAsync<BoundingClientRect>("DOMGetBoundingClientRect", "canvas");
+
+        // translate to offset
+        var offsetx = e.Touches[0].ClientX - CanvasRect.Left;
+        var offsety = e.Touches[0].ClientY - CanvasRect.Top;
+
+        // handledown
         HandleDown(offsetx, offsety);
         return true;
     }
@@ -542,9 +550,15 @@
     protected async Task<bool> TouchMove(TouchEventArgs e)
     {
         if (e.Touches == null || e.Touches.Length == 0) return false;
-        var rec = await JSRuntime.InvokeAsync<BoundingClientRect>("DOMGetBoundingClientRect", "canvas");
-        var offsetx = e.Touches[0].ClientX - rec.Left;
-        var offsety = e.Touches[0].ClientY - rec.Top;
+
+        // use the cached canvas bounding box
+        if (CanvasRect == null ) CanvasRect = await JSRuntime.InvokeAsync<BoundingClientRect>("DOMGetBoundingClientRect", "canvas");
+
+        // convert to offset
+        var offsetx = e.Touches[0].ClientX - CanvasRect.Left;
+        var offsety = e.Touches[0].ClientY - CanvasRect.Top;
+
+        // handle move
         HandleMove(offsetx, offsety);
         return true;
     }

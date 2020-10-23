@@ -10,6 +10,9 @@ using Microsoft.Graph;
 using System.Threading;
 
 // todo move receive methods to a model
+// todo better perf in sendline
+// todo purge after X time (to clean up the old entries)
+// same player over and over
 
 namespace scribble.Server.Hubs
 {
@@ -882,7 +885,7 @@ namespace scribble.Server.Hubs
                 {
                     if (char.IsLetterOrDigit(c)) sb.Append("_ ");
                     else if (c == '\n' || c == '\r') continue;
-                    else if (c == '\t') sb.Append(' ');
+                    else if (char.IsWhiteSpace(c)) sb.Append("  ");
                     else sb.Append(c);
                 }
                 return sb.ToString();
