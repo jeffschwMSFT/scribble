@@ -321,13 +321,16 @@
 
             HubConnection.On<string>("ReceiveRoundComplete", (word) =>
             {
-                HubCanDraw = false;
-                WordToDraw = word;
-                WordTimeout = 0;
-                CountDown.Stop();
-                GameState = GameStateType.Waiting;
-                Messages.Add("**** round complete ****");
-                StateHasChanged();
+                if (GameState == GameStateType.Playing)
+                {
+                    GameState = GameStateType.Waiting;
+                    HubCanDraw = false;
+                    WordToDraw = word;
+                    WordTimeout = 0;
+                    CountDown.Stop();
+                    Messages.Add("**** round complete ****");
+                    StateHasChanged();
+                }
             });
 
             await HubConnection.StartAsync();
