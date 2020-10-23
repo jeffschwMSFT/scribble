@@ -6,6 +6,7 @@
 @using Microsoft.AspNetCore.Http;
 @using System.Security.Claims;
 @using Microsoft.AspNetCore.Authorization;
+@using System.Globalization;
 @using System.Timers;
 @inject IJSRuntime JSRuntime
 @inject NavigationManager NavigationManager
@@ -13,6 +14,9 @@
 
 <!-- better timer management? -->
 <!-- undue (go back)/ eraser -->
+<!-- disapear the 'practice drawing here' -->
+<!-- fill? -->
+<!-- accessible and size is not great -->
 
 <style>
     #drawn {
@@ -79,7 +83,7 @@
 
     <div class="main" id="drawn" name="picknamePanel" hidden="@(Scene != SceneType.Lobby)">
         User name: <input @bind-value="UsernameInput" @bind-value:event="oninput" @onkeyup="e => KeyUpNextScene(e)" size="35" /><br />
-        <p style="font-size:9px">Usernames with ',' (coma), ':' (colon), or '&lt;' (lt) are not allowed</p>
+        <p style="font-size:9px">Usernames with ',' (comma), ':' (colon), or '&lt;' (lt) are not allowed</p>
         <button type="submit" @onclick="GotoNextScene">Join Game</button>
     </div>
 
@@ -113,19 +117,7 @@
         </div>
 
         <div class="form-group">
-            Color: <select @bind="ColorInput">
-                <option value="rgba(255,0,0,1.0)" selected="selected">red</option>
-                <option value="rgba(34,177,76,1.0)">green</option>
-                <option value="rgba(0,0,255,1.0)">blue</option>
-                <option value="rgba(64,0,128,1.0)">purple</option>
-                <option value="rgba(255,255,128,1.0)">yellow</option>
-                <option value="rgba(255,128,0,1.0)">orange</option>
-                <option value="rgba(128,128,128,1.0)">gray</option>
-                <option value="rgba(255,128,255,1.0)">pink</option>
-                <option value="rgba(128,64,0,1.0)">brown</option>
-                <option value="rgba(0,0,0,1.0)">black</option>
-                <option value="rgba(255,255,255,1.0)">white</option>
-            </select>
+            Color: <input type="color" @bind-value="ColorInput" @bind-value:event="oninput" @onchange="ColorOnChange" vaue="#FF0000" />
             Size: <select @bind="DiameterInput">
                 <option value=5 selected="selected">small</option>
                 <option value=10>medium</option>
@@ -135,7 +127,7 @@
             <br />
         </div>
         <div id="scrollbox" style="height: 300px;overflow: scroll;display: flex;flex-direction: column-reverse;">
-            @for(int i=Messages.Count-1; i>=0; i--)
+            @for (int i = Messages.Count - 1; i >= 0; i--)
             {
                 <div>
                     <div class="msg">@Messages[i]</div>
@@ -155,7 +147,6 @@
     private HubConnection HubConnection;
     private List<string> Messages = new List<string>();
     private string MessageInput;
-    private string ColorInput = "rgba(255,0,0,1.0)";
     private int DiameterInput = 5;
     private const int Width = 500;
     private const int Height = 300;
@@ -170,6 +161,8 @@
     private string JoinGameIdInput;
 
     // game play
+    private string ColorInput = "#ff0000";
+    private string CurrentColor = "rgba(255,0,0,1.0)";
     private bool HubCanDraw = false; // controled via Hub
     private enum GameStateType { Waiting, Playing };
     private GameStateType GameState = GameStateType.Waiting;
@@ -253,10 +246,10 @@
 
             HubConnection.On<string>("ReceiveMessage", (message) =>
             {
-                // add
-                Messages.Add($"{message}");
-                // trim to keep a reasonable amount
-                if (Messages.Count > 250) Messages.RemoveRange(0, 50);
+            // add
+            Messages.Add($"{message}");
+            // trim to keep a reasonable amount
+            if (Messages.Count > 250) Messages.RemoveRange(0, 50);
                 StateHasChanged();
             });
 
@@ -487,6 +480,32 @@
         DrawingPenIsDown = false;
     }
 
+    private void ColorOnChange(ChangeEventArgs e)
+    {
+        // set the color
+        var previous = '\0';
+        var sb = new StringBuilder();
+        var colorparts = 0;
+        sb.Append("rgba(");
+        foreach (var c in ColorInput.ToCharArray())
+        {
+            if (c == '#') continue;
+            else if (previous == '\0') previous = c;
+            else
+            {
+                var val = byte.Parse($"{previous}{c}", NumberStyles.HexNumber, CultureInfo.InvariantCulture);
+                sb.Append($"{val},");
+                previous = '\0';
+                colorparts++;
+            }
+        }
+        sb.Append("1.0)");
+        CurrentColor = sb.ToString();
+
+        // safe guard (the color was wrong)
+        if (colorparts != 3) CurrentColor = "rgba(255,0,0,1.0)";
+    }
+
     //
     // canvas
     //
@@ -557,7 +576,7 @@
         if (e.Touches == null || e.Touches.Length == 0) return false;
 
         // use the cached canvas bounding box
-        if (CanvasRect == null ) CanvasRect = await JSRuntime.InvokeAsync<BoundingClientRect>("DOMGetBoundingClientRect", "canvas");
+        if (CanvasRect == null) CanvasRect = await JSRuntime.InvokeAsync<BoundingClientRect>("DOMGetBoundingClientRect", "canvas");
 
         // convert to offset
         var offsetx = e.Touches[0].ClientX - CanvasRect.Left;
@@ -583,8 +602,8 @@
         if (PreviousX >= 0 && PreviousY >= 0 && DrawingPenIsDown)
         {
             // draw a point
-            DrawLine(PreviousX, PreviousY, x, y, ColorInput, DiameterInput);
-            if (!PracticeDrawingMode) await SendLine(PreviousX, PreviousY, x, y, ColorInput, DiameterInput);
+            DrawLine(PreviousX, PreviousY, x, y, CurrentColor, DiameterInput);
+            if (!PracticeDrawingMode) await SendLine(PreviousX, PreviousY, x, y, CurrentColor, DiameterInput);
 
             // capture for next move
             PreviousX = x;
