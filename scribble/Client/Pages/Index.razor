@@ -14,7 +14,7 @@
 
 <!-- better timer management? -->
 <!-- undue (go back)/ eraser -->
-<!-- disapear the 'practice drawing here' -->
+<!-- disappear the 'practice drawing here' -->
 <!-- fill? -->
 <!-- accessible and size is not great -->
 
@@ -47,6 +47,7 @@
         border-radius: 255px 15px 255px 15px/15px 255px 15px 255px;
         border: solid 5px hsla(67,95%,35%,1);
         display: inline-block;
+        vertical-align: middle;
     }
 
     select {
@@ -117,17 +118,28 @@
         </div>
 
         <div class="form-group">
-            Color: <input type="color" @bind-value="ColorInput" @bind-value:event="oninput" @onchange="ColorOnChange" vaue="#FF0000" />
-            Size: <input type="range" class="slider" min="5" max="40" @bind="DiameterInput" />
+            <input type="button" style="background: #ff0000; border: dashed;" size="4" @onclick='e => ChangeColor(e,"rgba(255,0,0,1.0)")' />
+            <input type="button" style="background: #22b14c; border: dashed;" size="4" @onclick='e => ChangeColor(e,"rgba(34,177,76,1.0)")' />
+            <input type="button" style="background: #0000ff; border: dashed;" size="4" @onclick='e => ChangeColor(e,"rgba(0,0,255,1.0)")' />
+            <input type="button" style="background: #400080; border: dashed;" size="4" @onclick='e => ChangeColor(e,"rgba(64,0,128,1.0)")' />
+            <input type="button" style="background: #ffff80; border: dashed;" size="4" @onclick='e => ChangeColor(e,"rgba(255,255,128,1.0)")' />
+            <input type="button" style="background: #ff8000; border: dashed;" size="4" @onclick='e => ChangeColor(e,"rgba(255,128,0,1.0)")' />
+            <input type="button" style="background: #808080; border: dashed;" size="4" @onclick='e => ChangeColor(e,"rgba(128,128,128,1.0)")' />
+            <input type="button" style="background: #ff80ff; border: dashed;" size="4" @onclick='e => ChangeColor(e,"rgba(255,128,255,1.0)")' />
+            <input type="button" style="background: #804000; border: dashed;" size="4" @onclick='e => ChangeColor(e,"rgba(128,64,0,1.0)")' />
+            <input type="button" style="background: #000000; border: dashed;" size="4" @onclick='e => ChangeColor(e,"rgba(0,0,0,1.0)")' />
+            <input type="button" style="background: #ffffff; border: dashed;" size="4" @onclick='e => ChangeColor(e,"rgba(255,255,255,1.0)")' />
+            <input type="color" style="border: dashed;" @bind-value="ColorInput" @bind-value:event="oninput" @onchange="ColorOnChange" vaue="#FF0000" />
+            <input type="range" class="slider" min="5" max="40" @bind="DiameterInput" step="1" width="100"/>
             <button @onclick="HandleClearScreen">Clear</button>
             <br />
         </div>
         <div id="scrollbox" style="height: 300px;overflow: scroll;display: flex;flex-direction: column-reverse;">
             @for (int i = Messages.Count - 1; i >= 0; i--)
             {
-                <div>
-                    <div class="msg">@Messages[i]</div>
-                </div>
+            <div>
+                <div class="msg">@Messages[i]</div>
+            </div>
             }
             <hr />
         </div>
@@ -242,10 +254,10 @@
 
             HubConnection.On<string>("ReceiveMessage", (message) =>
             {
-            // add
-            Messages.Add($"{message}");
-            // trim to keep a reasonable amount
-            if (Messages.Count > 250) Messages.RemoveRange(0, 50);
+                // add
+                Messages.Add($"{message}");
+                // trim to keep a reasonable amount
+                if (Messages.Count > 250) Messages.RemoveRange(0, 50);
                 StateHasChanged();
             });
 
@@ -270,21 +282,21 @@
 
             HubConnection.On("ReceiveStartGame", () =>
             {
-            // start the game
-            Scene = SceneType.Play;
+                // start the game
+                Scene = SceneType.Play;
                 StateHasChanged();
             });
 
             HubConnection.On<string, int, string, bool>("ReceiveNextRound", (player, timeout, word, candraw) =>
             {
-            // check scene state
-            if (Scene == SceneType.Lobby) return;
+                // check scene state
+                if (Scene == SceneType.Lobby) return;
 
-            // clear the screen
-            ClearScreen();
+                // clear the screen
+                ClearScreen();
 
-            // setup the details
-            PracticeDrawingMode = false;
+                // setup the details
+                PracticeDrawingMode = false;
                 HubCanDraw = candraw;
                 WordToDraw = word;
                 WordTimeout = timeout;
@@ -299,13 +311,13 @@
                         if (HubCanDraw || IsOwner) await SendRoundComplete(Group);
                         CountDown.Stop();
                     }
-                // refresh
-                StateHasChanged();
+                    // refresh
+                    StateHasChanged();
                 };
                 CountDown.Start();
 
-            // refesh
-            StateHasChanged();
+                // refesh
+                StateHasChanged();
             });
 
             HubConnection.On<string>("ReceiveRoundComplete", (word) =>
@@ -478,12 +490,35 @@
 
     private void ColorOnChange(ChangeEventArgs e)
     {
-        // set the color
+        CurrentColor = HexToRgba(ColorInput);
+    }
+
+    private void ChangeColor(MouseEventArgs e, string rgba)
+    {
+        CurrentColor = rgba;
+        ColorInput = RgbaToHex(rgba);
+    }
+
+    private string RgbaToHex(string rgba)
+    {
+        if (string.IsNullOrWhiteSpace(rgba) || !rgba.StartsWith("rgba(", StringComparison.InvariantCultureIgnoreCase)) return "#ff0000";
+
+        // from 'rgba(255,0,128,1.0)' to '#ff0080'
+        var parts = rgba.Replace("rgba(","", StringComparison.InvariantCultureIgnoreCase).Split(',');
+        if (parts.Length < 3) return "#ff0000";
+        return $"#{Convert.ToByte(parts[0]):x2}{Convert.ToByte(parts[1]):x2}{Convert.ToByte(parts[2]):x2}";
+    }
+
+    private string HexToRgba(string hex)
+    {
+        if (string.IsNullOrWhiteSpace(hex)) return "rgba(255,0,0,1.0)";
+
+        // from '#ff0080' to 'rgba(255,0,128,1.0)'
         var previous = '\0';
         var sb = new StringBuilder();
         var colorparts = 0;
         sb.Append("rgba(");
-        foreach (var c in ColorInput.ToCharArray())
+        foreach (var c in hex.ToCharArray())
         {
             if (c == '#') continue;
             else if (previous == '\0') previous = c;
@@ -496,10 +531,10 @@
             }
         }
         sb.Append("1.0)");
-        CurrentColor = sb.ToString();
 
         // safe guard (the color was wrong)
-        if (colorparts != 3) CurrentColor = "rgba(255,0,0,1.0)";
+        if (colorparts != 3) return "rgba(255,0,0,1.0)";
+        return sb.ToString();
     }
 
     //
