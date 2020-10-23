@@ -245,7 +245,7 @@ namespace scribble.Server.Hubs
                 }
 
                 // give credit for the drawer
-                GroupDetails.AddToScore(group, round.ConnectionId, round.Timeout);
+                GroupDetails.AddToScore(group, round.ConnectionId, round.Timeout/3f);
                 GroupDetails.SetHasAnswered(group, round.ConnectionId);
 
                 // notify everyone except the drawer
