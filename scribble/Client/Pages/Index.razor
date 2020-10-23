@@ -118,11 +118,7 @@
 
         <div class="form-group">
             Color: <input type="color" @bind-value="ColorInput" @bind-value:event="oninput" @onchange="ColorOnChange" vaue="#FF0000" />
-            Size: <select @bind="DiameterInput">
-                <option value=5 selected="selected">small</option>
-                <option value=10>medium</option>
-                <option value=20>large</option>
-            </select>
+            Size: <input type="range" class="slider" min="5" max="40" @bind="DiameterInput" />
             <button @onclick="HandleClearScreen">Clear</button>
             <br />
         </div>
