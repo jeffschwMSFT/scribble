@@ -6,7 +6,6 @@ using System.Threading.Tasks;
 using System.Security.Claims;
 using System.Text;
 using System.Linq.Expressions;
-using Microsoft.Graph;
 using System.Threading;
 
 // todo move receive methods to a model
